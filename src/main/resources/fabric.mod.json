@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "ffcraft",
+  "version": "${version}",
+  "name": "FFCraft",
+  "description": "FFCraftMOD",
+  "authors": [],
+  "contact": {},
+  "license": "unlicense",
+  "icon": "assets/ffcraft/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "sashwind.mc.mod.ffcraft.client.FFCraftDataGenerator"
+    ],
+    "client": [
+      "sashwind.mc.mod.ffcraft.client.FFCraftClient"
+    ],
+    "main": [
+      "sashwind.mc.mod.ffcraft.FFCraft"
+    ]
+  },
+  "mixins": [
+    "ffcraft.mixins.json",
+    {
+      "config": "ffcraft.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": ">=1.21",
+    "fabric-gui-imgui": ">=1.0"
+  }
+}

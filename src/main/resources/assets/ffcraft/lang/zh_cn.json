@@ -1,0 +1,12 @@
+{
+  "key.category.videoplayer.custom_category": "FFCraft",
+  "key.videoplayer.opengui": "打开菜单",
+
+
+  "key.screens.mainscreen.title": "FFCraft 主菜单",
+  "key.screens.mainscreen.button.createplayer": "+",
+  "key.screens.mainscreen.button.deleteplayer": "-",
+  "key.hud.createplayer.line1": "现在开始创建播放器，最少三个点，点击起始点完成",
+  "key.button.yes": "是",
+  "key.button.no": "否"
+}
