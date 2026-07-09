@@ -41,7 +41,7 @@
 ### 开发者
 
 ```bash
-git clone https://github.com/sashwind/ffcraft.git
+git clone https://github.com/sashwind/FFCraft.git
 cd FFCraft
 ./gradlew build
 ```
@@ -91,5 +91,5 @@ cd FFCraft
 ---
 
 *希望这个项目可以帮到你喵~ --sashwind*
-*插件版：[github](https://github.com/sashwind/ffcraftplg)*
+*插件版：[github](https://github.com/sashwind/FFCraftPlg)*
 ```
