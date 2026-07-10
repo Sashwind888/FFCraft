@@ -28,7 +28,7 @@ public class StreamPuller extends Thread {
     private VideoProcessor videoProcessor;
 
     public StreamPuller(String streamUrl, FFmpegSettings settings) {
-        // Jellyfin/Emby fMP4 HLS → 强制 TS 分段（FFmpeg 5.1.2 对 fMP4 seek 支持差）
+        // Jellyfin/Emby fMP4 HLS → 强制 TS（fMP4 会导致 grabber.start() 卡死）
         if (streamUrl.contains("SegmentContainer=mp4")) {
             streamUrl = streamUrl.replace("SegmentContainer=mp4", "SegmentContainer=ts");
         }
@@ -157,7 +157,7 @@ public class StreamPuller extends Thread {
                     NativeImage img = createNativeImage(task.width, task.height, task.raw);
                     if (img != null) {
                         hasVideoFrame = true;
-                        frameQueue.put(img); // 阻塞等待消费，提供背压防止无限缓冲
+                        frameQueue.put(img);
                     }
                 } catch (InterruptedException e) {
                     break;
