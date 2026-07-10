@@ -271,49 +271,48 @@ public class ClientVideoPlaybackManager {
                 }
             }
 
-            // video frames — audio-pacing: 音频为主时钟
+            // video frames — audio-pacing: 音频为主时钟，每次限取N帧防止跳帧
             StreamPuller sp = pullers.get(pid);
             if (sp != null) {
+                long samples = audioSampleCount.getOrDefault(pid, 0L);
+                double audioSecs = (double) samples / Math.max(1, sp.getAudioSampleRate());
+                long pushed = videoFrameSeq.getOrDefault(pid, 0L);
+                double fps = sp.getFrameRate();
+                double videoSecs = (double) pushed / Math.max(1, fps);
+                double threshold = 2.0 / Math.max(1, fps);
+
+                // 取帧直到追上音频或队列空（每帧都计入时钟，丢弃的也不遗漏）
                 NativeImage latest = null;
-                    while (true) {
-                        NativeImage f = sp.getFrame();
-                        if (f == null) break;
-                        if (latest != null) latest.close();
-                        latest = f;
-                    }
-                    if (latest != null) {
-                        // Audio-pacing: 累计采样数/采样率 = 已播时间
-                        long samples = audioSampleCount.getOrDefault(pid, 0L);
-                        double audioSecs = (double) samples / Math.max(1, sp.getAudioSampleRate());
-                        long pushed = videoFrameSeq.getOrDefault(pid, 0L);
-                        double fps = sp.getFrameRate();
-                        double videoSecs = (double) pushed / Math.max(1, fps);
-                        double threshold = 2.0 / Math.max(1, fps); // 容忍2帧领先
+                while (videoSecs <= audioSecs + threshold) {
+                    NativeImage f = sp.getFrame();
+                    if (f == null) break;
+                    if (latest != null) latest.close();
+                    latest = f;
+                    pushed++;
+                    videoSecs = (double) pushed / Math.max(1, fps);
+                }
+                if (latest != null) {
+                    audioOnlyPlayers.remove(pid);
+                    pushDownscaledToScreens(player, latest);
+                    videoFrameSeq.put(pid, pushed);
 
-                        if (videoSecs <= audioSecs + threshold) {
-                            audioOnlyPlayers.remove(pid);
-                            pushDownscaledToScreens(player, latest);
-                            videoFrameSeq.put(pid, pushed + 1);
-
-                            // Fallback: 首帧到达但 probe 还没返回时，用实际帧尺寸重新算 UV
-                            if (uvRecalculated.get(pid) == null || !uvRecalculated.get(pid)) {
-                                var videoSrc = player.playlist().get(idx);
-                                int vw = videoSrc.originalWidth();
-                                int vh = videoSrc.originalHeight();
-                                if (vw <= 0 || vh <= 0) {
-                                    vw = latest.getWidth();
-                                    vh = latest.getHeight();
-                                }
-                                if (vw > 0 && vh > 0) {
-                                    recalcUvForVideo(pid, player, (double) vw / vh);
-                                    uvRecalculated.put(pid, true);
-                                }
+                        if (uvRecalculated.get(pid) == null || !uvRecalculated.get(pid)) {
+                            var videoSrc = player.playlist().get(idx);
+                            int vw = videoSrc.originalWidth();
+                            int vh = videoSrc.originalHeight();
+                            if (vw <= 0 || vh <= 0) {
+                                vw = latest.getWidth();
+                                vh = latest.getHeight();
+                            }
+                            if (vw > 0 && vh > 0) {
+                                recalcUvForVideo(pid, player, (double) vw / vh);
+                                uvRecalculated.put(pid, true);
                             }
                         }
-                        // else: 视频领先音频 → 丢弃帧，等音频追上
-
                         latest.close();
-                    } else {
+                    }
+
+                {
                         // 检测纯音频流：运行超过1秒仍无视频帧 → 推送占位图
                         Long pms = playbackStartMs.get(pid);
                         long elapsed = pms != null ? System.currentTimeMillis() - pms : 0;

@@ -85,9 +85,13 @@ public class OpenAlAudioPlayer {
 
     private float spatialVolume = 1f;
     private long totalSamplesConsumed = 0;
+    private long prebufSamples = -1; // 首次播放前的预缓冲采样数
 
-    /** 累计已消耗的音频采样数（用于 audio-pacing 视频同步） */
-    public long getTotalSamplesConsumed() { return totalSamplesConsumed; }
+    /** 实际已播放的采样数（扣除预缓冲，用于音视频同步） */
+    public long getTotalSamplesConsumed() {
+        if (prebufSamples < 0) return 0; // 还没开始播
+        return totalSamplesConsumed - prebufSamples;
+    }
 
     /** 获取上次计算的距离（调试用） */
     public double getLastDistance() { return lastDist; }
@@ -135,8 +139,9 @@ public class OpenAlAudioPlayer {
             }
             AL10.alSourcePlay(source);
             started = true;
+            prebufSamples = totalSamplesConsumed; // 扣除预缓冲偏移
             System.out.println("[OpenAL] First play: source=" + source + " fmt=" + (fmt == AL10.AL_FORMAT_STEREO16 ? "STEREO" : "MONO")
-                    + " sr=" + sampleRate + " ch=" + channels);
+                    + " sr=" + sampleRate + " ch=" + channels + " prebuf=" + prebufSamples);
         }
 
         // restart if stalled
