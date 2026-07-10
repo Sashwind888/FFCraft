@@ -13,7 +13,7 @@ import org.lwjgl.system.MemoryUtil;
 
 public class StreamPuller extends Thread {
     private final BlockingQueue<NativeImage> frameQueue;
-    private final BlockingQueue<short[]> audioQueue = new LinkedBlockingQueue<>(120);
+    private final BlockingQueue<short[]> audioQueue = new LinkedBlockingQueue<>(30);
     private final BlockingQueue<VideoTask> videoQueue = new LinkedBlockingQueue<>(4); // 视频任务队列
     private volatile int audioSampleRate = 0; // 0=未就绪
     private volatile int audioChannels = 0;
@@ -138,7 +138,7 @@ public class StreamPuller extends Thread {
                 System.out.println("[StreamPuller] 首帧PTS=" + videoStartPts + "μs (" + (videoStartPts/1000000.0) + "s)");
             }
 
-            try { videoQueue.put(new VideoTask(w, h, raw)); } catch (InterruptedException e) { running = false; }
+            videoQueue.offer(new VideoTask(w, h, raw)); // 非阻塞，让音频帧能通过
         }
     }
 
