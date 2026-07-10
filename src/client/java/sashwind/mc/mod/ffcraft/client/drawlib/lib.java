@@ -33,50 +33,56 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.logging.Logger;
 
-import static net.minecraft.resources.Identifier.fromNamespaceAndPath;
-
 public class lib {
     boolean closed = false;
     int POSx, POSy, POSz;
     VertexFormat.Mode VFM;
     public ArrayList<Vertex> vertices = new ArrayList<>();
     public AbstractTexture WAYPOINT_TEXTURE;
-    public final RenderPipeline FILLED_THROUGH_WALLS;
+    public RenderPipeline FILLED_THROUGH_WALLS;
     public WaypointRenderState waypointState;
 
     private static final java.util.concurrent.atomic.AtomicInteger PLACEHOLDER_COUNTER =
             new java.util.concurrent.atomic.AtomicInteger(0);
     private static final String MOD_ID = "ffcraft";
 
+    // Overlay 专用 1x1 白色纹理（避免绑定视频纹理导致首像素颜色污染画面）
+    private static AbstractTexture OVERLAY_WHITE;
+
+    private static void ensureOverlayWhite() {
+        if (OVERLAY_WHITE != null) return;
+        TextureManager tm = Minecraft.getInstance().getTextureManager();
+        Identifier id = Identifier.fromNamespaceAndPath(MOD_ID, "_overlay_white");
+        DynamicTexture dt = new DynamicTexture(MOD_ID + ".overlay", 1, 1, true);
+        tm.register(id, dt);
+        NativeImage img = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
+        img.setPixel(0, 0, 0xFFFFFFFF); // 白色不透明
+        dt.setPixels(img);
+        dt.upload();
+        img.close();
+        OVERLAY_WHITE = dt;
+    }
+
     public lib(int x, int y, int z, VertexFormat.Mode VertexFormatMode) {
         POSx = x; POSy = y; POSz = z;
         VFM = VertexFormatMode;
-        FILLED_THROUGH_WALLS = RenderPipelines.register(RenderPipeline.builder(RenderPipelines.ENTITY_EMISSIVE_SNIPPET)
-                .withLocation(fromNamespaceAndPath(MOD_ID, "pipeline/debug_filled_box_through_walls"))
-                .withVertexFormat(DefaultVertexFormat.ENTITY, VFM)
-                .withShaderDefine("NO_OVERLAY")
-                .withShaderDefine("NO_FOG")
-                .withSampler("Sampler0")
-                .withSampler("Sampler1")
-                .withSampler("Sampler2")
-                .build()
-        );
-        // Iris 光影兼容
-        try {
-            Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
-            Object inst = api.getMethod("getInstance").invoke(null);
-            boolean inUse = (boolean) api.getMethod("isShaderPackInUse").invoke(inst);
-            System.out.println("[Iris] shaderPackInUse=" + inUse + " pipeline=" + FILLED_THROUGH_WALLS.getLocation());
-            if (inUse) {
-                Class<?> prog = Class.forName("net.irisshaders.iris.api.v0.IrisProgram");
-                Object p = Enum.valueOf((Class<Enum>) prog, "HAND");
-                api.getMethod("assignPipeline", RenderPipeline.class, prog).invoke(inst, FILLED_THROUGH_WALLS, p);
-                System.out.println("[Iris] assignPipeline ENTITIES OK");
-            }
-        } catch (ClassNotFoundException ignored) {
-            System.out.println("[Iris] Not loaded");
-        } catch (Exception e) {
-            System.err.println("[Iris] " + e.getMessage());
+
+        if (VFM == VertexFormat.Mode.LINES || VFM == VertexFormat.Mode.DEBUG_LINE_STRIP) {
+            // 线框模式：使用自定义管线（NO_OVERLAY + NO_FOG），原版管线不支持 line 拓扑
+            // 仅在放置参考点时使用，此时通常无光影
+            RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.ENTITY_EMISSIVE_SNIPPET)
+                    .withLocation(Identifier.fromNamespaceAndPath(MOD_ID, "pipeline/entity_translucent_emissive"))
+                    .withVertexFormat(DefaultVertexFormat.ENTITY, VFM)
+                    .withShaderDefine("NO_OVERLAY")
+                    .withShaderDefine("NO_FOG")
+                    .withSampler("Sampler0")
+                    .withSampler("Sampler1")
+                    .withSampler("Sampler2")
+                    .build();
+            FILLED_THROUGH_WALLS = RenderPipelines.register(pipeline);
+        } else {
+            // 面片模式（TRIANGLES/QUADS）：直接使用原版管线，Iris 原生兼容
+            FILLED_THROUGH_WALLS = RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE;
         }
     }
 
@@ -94,6 +100,8 @@ public class lib {
 
     public void renderAndDrawWaypoint(LevelRenderContext context) {
         if (closed) return;
+        // 纹理上传必须在 render pass 之外完成
+        ensureOverlayWhite();
         if (WAYPOINT_TEXTURE == null) {
             Identifier id = Identifier.fromNamespaceAndPath(MOD_ID, "_placeholder" + PLACEHOLDER_COUNTER.getAndIncrement());
             TextureManager textureManager = Minecraft.getInstance().getTextureManager();
@@ -126,7 +134,7 @@ public class lib {
         Vec3 camera = context.levelState().cameraRenderState.pos;
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
-        buffer = new BufferBuilder(ALLOCATOR, FILLED_THROUGH_WALLS.getVertexFormatMode(), FILLED_THROUGH_WALLS.getVertexFormat());
+        buffer = new BufferBuilder(ALLOCATOR, VFM, FILLED_THROUGH_WALLS.getVertexFormat());
         renderFilledBox(matrices.last().pose(), buffer, waypointState.r(), waypointState.g(), waypointState.b(), waypointState.a());
         matrices.popPose();
     }
@@ -134,16 +142,11 @@ public class lib {
     public void renderFilledBox(Matrix4f positionMatrix, BufferBuilder buffer, float red, float green, float blue, float alpha) {
         if (closed) return;
         for (Vertex v : vertices) {
-            int blockLight = 255;  // 0-15
-            int skyLight = 255;    // 0-15
-            int packed = packLightmap(blockLight, skyLight);
-            int lu = packed & 0xFFFF;   // 低16位 → 方块光照
-            int lv = packed >> 16;      // 高16位 → 天空光照
             buffer.addVertex(positionMatrix, v.x, v.y, v.z)
                     .setColor(1f, 1f, 1f, v.a)
                     .setUv(v.u, v.v)
                     .setUv1(0, 0)
-                    .setUv2(blockLight,skyLight)
+                    .setUv2(255, 255)   // emissive：始终最大亮度
                     .setNormal(v.nx, v.ny, v.nz);
         }
     }
@@ -175,11 +178,11 @@ public class lib {
     public void draw(Minecraft client, RenderPipeline pipeline, MeshData builtBuffer, MeshData.DrawState drawParameters, GpuBuffer verts, VertexFormat format) {
         if (closed) return;
         GpuBuffer indices; VertexFormat.IndexType indexType;
-        if (pipeline.getVertexFormatMode() == VertexFormat.Mode.QUADS) {
+        if (VFM == VertexFormat.Mode.QUADS) {
             builtBuffer.sortQuads(ALLOCATOR, RenderSystem.getProjectionType().vertexSorting());
             indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(builtBuffer.indexBuffer());
             indexType = builtBuffer.drawState().indexType();
-        } else if (pipeline.getVertexFormatMode() == VertexFormat.Mode.LINES) {
+        } else if (VFM == VertexFormat.Mode.LINES) {
             int vertexCount = drawParameters.vertexCount();
             ByteBuffer idxBuffer = MemoryUtil.memAlloc(vertexCount * 2);
             for (int i = 0; i < vertexCount; i++) idxBuffer.putShort((short) i);
@@ -188,7 +191,7 @@ public class lib {
             indexType = VertexFormat.IndexType.SHORT;
             MemoryUtil.memFree(idxBuffer);
         } else {
-            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer = RenderSystem.getSequentialBuffer(pipeline.getVertexFormatMode());
+            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer = RenderSystem.getSequentialBuffer(VFM);
             indices = shapeIndexBuffer.getBuffer(drawParameters.indexCount());
             indexType = shapeIndexBuffer.type();
         }
@@ -202,14 +205,13 @@ public class lib {
             renderPass.bindTexture("Sampler0", WAYPOINT_TEXTURE.getTextureView(), pointSampler);
             // lightmap: 用 Minecraft 的真实光照贴图（Iris ENTITIES_ALPHA 必须）
             renderPass.bindTexture("Sampler2", client.gameRenderer.lightmap(), pointSampler);
-            // Sampler1 (overlay): NO_OVERLAY 定义下不访问，复用主纹理占位
-            renderPass.bindTexture("Sampler1", WAYPOINT_TEXTURE.getTextureView(), pointSampler);
+            renderPass.bindTexture("Sampler1", OVERLAY_WHITE.getTextureView(), pointSampler);
             renderPass.setPipeline(pipeline);
             RenderSystem.bindDefaultUniforms(renderPass);
             renderPass.setUniform("DynamicTransforms", dynamicTransforms);
             renderPass.setVertexBuffer(0, verts);
             renderPass.setIndexBuffer(indices, indexType);
-            renderPass.drawIndexed(0 / format.getVertexSize(), 0, drawParameters.indexCount(), 1);
+            renderPass.drawIndexed(0, 0, drawParameters.indexCount(), 1);
         }
         builtBuffer.close();
     }
@@ -239,11 +241,4 @@ public class lib {
         buffer = null;
     }
 
-    public static int packLightmap(int blockLight, int skyLight) {
-        // 确保光照值在有效范围内
-        blockLight = Math.min(15, Math.max(0, blockLight));
-        skyLight = Math.min(15, Math.max(0, skyLight));
-        // 核心逻辑：天空光照左移16位，再与方块光照进行按位或运算
-        return (skyLight << 16) | (blockLight & 0xFFFF);
-    }
 }

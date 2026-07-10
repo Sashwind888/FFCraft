@@ -13,7 +13,7 @@ import org.lwjgl.system.MemoryUtil;
 
 public class StreamPuller extends Thread {
     private final BlockingQueue<NativeImage> frameQueue;
-    private final BlockingQueue<short[]> audioQueue = new LinkedBlockingQueue<>(30);
+    private final BlockingQueue<short[]> audioQueue = new LinkedBlockingQueue<>(120);
     private final BlockingQueue<VideoTask> videoQueue = new LinkedBlockingQueue<>(4); // 视频任务队列
     private volatile int audioSampleRate = 0; // 0=未就绪
     private volatile int audioChannels = 0;
@@ -94,7 +94,10 @@ public class StreamPuller extends Thread {
         // 音频：主线程快速处理（不阻塞）
         if (frame.type == Frame.Type.AUDIO && frame.samples != null && frame.samples.length > 0) {
             var samples = frame.samples;
-            audioSampleRate = frame.sampleRate > 0 ? frame.sampleRate : 44100;
+            if (audioSampleRate <= 0) {
+                audioSampleRate = frame.sampleRate > 0 ? frame.sampleRate : 48000;
+                System.out.println("[StreamPuller] Audio sr=" + audioSampleRate + " ch=" + frame.audioChannels + " (from first frame)");
+            }
             audioChannels = frame.audioChannels > 0 ? frame.audioChannels : 2;
             short[] pcm = null;
             if (samples[0] instanceof java.nio.ShortBuffer sb) {

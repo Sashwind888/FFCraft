@@ -9,7 +9,7 @@ public class OpenAlAudioPlayer {
     private int source;
     private volatile boolean running;
     private boolean started;
-    private final int[] buffers = new int[4];
+    private final int[] buffers = new int[8]; // 8个buffer保证96000Hz下足够缓冲(≈85ms)
     private int sampleRate, channels;
     private boolean leftOn = true, rightOn = true;
     private int debugTick = 0;
@@ -104,17 +104,20 @@ public class OpenAlAudioPlayer {
         // unqueue processed buffers
         int processed = AL10.alGetSourcei(source, AL11.AL_BUFFERS_PROCESSED);
 
-        // refill processed buffers only if PCM data available
         for (int i = 0; i < processed; i++) {
+            int buf = AL10.alSourceUnqueueBuffers(source);
             short[] pcm = queue.poll();
             if (pcm != null) {
-                int buf = AL10.alSourceUnqueueBuffers(source);
                 totalSamplesConsumed += pcm.length / Math.max(1, channels);
                 pcm = applyChannelMask(pcm);
                 AL10.alBufferData(buf, fmt, pcm, sampleRate);
-                AL10.alSourceQueueBuffers(source, buf);
+            } else {
+                // 队列空：填充静音避免旧数据重放导致卡顿
+                int bufSize = AL10.alGetBufferi(buf, AL10.AL_SIZE);
+                short[] silence = new short[bufSize / 2];
+                AL10.alBufferData(buf, fmt, silence, sampleRate);
             }
-            // if no PCM, leave buffer queued (will replay) - better than silence pop
+            AL10.alSourceQueueBuffers(source, buf);
         }
 
         // if never started and we have data, fill all buffers and play

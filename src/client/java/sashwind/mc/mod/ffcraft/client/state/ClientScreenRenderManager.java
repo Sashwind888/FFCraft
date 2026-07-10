@@ -63,10 +63,12 @@ public final class ClientScreenRenderManager {
         if (minecraft.level == null) { clearAll(); return; }
         ResourceKey<Level> currentDim = minecraft.level.dimension();
         Set<UUID> aliveScreenIds = new HashSet<>();
+        Set<UUID> alivePlayerIds = new HashSet<>();
         Set<UUID> dirtyPlayers = new HashSet<>();
 
         for (VideoPlayerData player : snapshot.players()) {
             UUID pid = player.id();
+            alivePlayerIds.add(pid);
             for (VideoScreenData sd : player.screens()) {
                 if (!sd.dimension().equals(currentDim)) continue;
                 aliveScreenIds.add(sd.id());
@@ -94,19 +96,36 @@ public final class ClientScreenRenderManager {
             }
         }
 
-        // Remove stale screens
-        List<UUID> stale = new ArrayList<>();
+        // Remove stale screens (not in current snapshot)
+        List<UUID> staleScreens = new ArrayList<>();
         for (UUID id : ACTIVE_SCREENS.keySet()) {
-            if (!aliveScreenIds.contains(id)) stale.add(id);
+            if (!aliveScreenIds.contains(id)) staleScreens.add(id);
         }
-        for (UUID id : stale) {
+        for (UUID id : staleScreens) {
             Screen screen = ACTIVE_SCREENS.remove(id);
             if (screen != null) screen.close();
             LAST_UV_TRANSFORMS.remove(id);
         }
 
-        // Rebuild shared WorldDraw vertices for dirty players
-        for (UUID pid : dirtyPlayers) {
+        // Remove stale players (players deleted entirely from snapshot)
+        List<UUID> stalePlayers = new ArrayList<>();
+        for (UUID pid : PLAYER_WORLDDRAWS.keySet()) {
+            if (!alivePlayerIds.contains(pid)) stalePlayers.add(pid);
+        }
+        for (UUID pid : stalePlayers) {
+            WorldDraw wd = PLAYER_WORLDDRAWS.remove(pid);
+            if (wd != null) wd.close();
+        }
+
+        // 重建受影响的 WorldDraw
+        // 有删除时必须全部重建（已删除屏幕不在 snapshot 中，无法反查 owner）
+        Set<UUID> toRebuild = new HashSet<>(dirtyPlayers);
+        if (!staleScreens.isEmpty() || !stalePlayers.isEmpty()) {
+            for (VideoPlayerData player : snapshot.players()) {
+                toRebuild.add(player.id());
+            }
+        }
+        for (UUID pid : toRebuild) {
             syncPlayerWorldDraw(pid, snapshot);
         }
     }
