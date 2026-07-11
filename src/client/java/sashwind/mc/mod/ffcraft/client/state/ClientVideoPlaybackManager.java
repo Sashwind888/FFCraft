@@ -346,18 +346,37 @@ public class ClientVideoPlaybackManager {
                     ap.update();
                     // 同步音频采样计数（用于 video audio-pacing）
                     audioSampleCount.put(pid, ap.getTotalSamplesConsumed());
+                    // 空间音频：距离衰减 + 立体声左右平衡
                     if (!player.screens().isEmpty()) {
                         var sc = player.screens().get(0);
-                        if (!sc.vertices().isEmpty()) {
-                            var v = sc.vertices().get(0);
-                            var cam = Minecraft.getInstance().player;
-                            if (cam != null) {
-                                ap.updatePositionAndGain(v.x(), v.y(), v.z(), cam.getX(), cam.getY(), cam.getZ());
-                            }
+                        var cam = Minecraft.getInstance().player;
+                        if (!sc.vertices().isEmpty() && cam != null) {
+                            // ① 计算屏幕中心点
+                            double cx = 0, cy = 0, cz = 0;
+                            for (var v : sc.vertices()) { cx += v.x(); cy += v.y(); cz += v.z(); }
+                            cx /= sc.vertices().size(); cy /= sc.vertices().size(); cz /= sc.vertices().size();
+                            // ② 距离衰减: 1.0 / max(1, dist/16) — 16格内满音量，每16格减半
+                            double dx = cx - cam.getX();
+                            double dy = cy - cam.getEyeY();
+                            double dz = cz - cam.getZ();
+                            double dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                            float distVol = (float) Math.clamp(1.0 / Math.max(1, dist / 16), 0, 1);
+                            // ③ 左右声道平衡（Pan）：基于玩家视角方向与屏幕方向的点积
+                            //    使用等功率法则 sqrt((1±pan)/2)，pan=0 时左右各≈0.707（比线性法则响亮）
+                            var look = cam.getLookAngle();
+                            var right = new net.minecraft.world.phys.Vec3(-look.z, 0, look.x).normalize();
+                            var toScr = new net.minecraft.world.phys.Vec3(dx, 0, dz).normalize();
+                            float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
+                            // ④ 声道状态（屏幕可独立开关左右声道）
+                            var ch = sc.channelState();
+                            float leftFactor = ch.leftEnabled() ? 1f : 0f;
+                            float rightFactor = ch.rightEnabled() ? 1f : 0f;
+                            // ⑤ 综合音量 = 用户设置音量 × 距离衰减 × 等功率立体声平衡 × 声道开关
+                            float u = currentVolume;
+                            float lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
+                            float rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
+                            ap.setSpatialVolumes(lVol, rVol);
                         }
-                        // 应用声道状态到音频播放器
-                        var ch = sc.channelState();
-                        ap.setChannels(ch.leftEnabled(), ch.rightEnabled());
                     }
                 }
             }

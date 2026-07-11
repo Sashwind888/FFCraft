@@ -11,7 +11,8 @@ public class OpenAlAudioPlayer {
     private boolean started;
     private final int[] buffers = new int[8]; // 8个buffer保证96000Hz下足够缓冲(≈85ms)
     private int sampleRate, channels;
-    private boolean leftOn = true, rightOn = true;
+    /** Per-channel spatial volume (distance × pan × channel state), applied in PCM domain */
+    private float spatialVolumeL = 1f, spatialVolumeR = 1f;
     private int debugTick = 0;
 
     public OpenAlAudioPlayer(BlockingQueue<short[]> queue) {
@@ -32,58 +33,39 @@ public class OpenAlAudioPlayer {
     private float volume = 1f;
     public void setVolume(float v) { this.volume = v; }
 
-    /** 设置声道开关 */
-    public void setChannels(boolean left, boolean right) {
-        this.leftOn = left;
-        this.rightOn = right;
+    /**
+     * 设置左右声道的空间音量（已综合距离衰减 + 立体声平衡 + 声道状态）
+     * 在 PCM 域独立控制左右声道增益，实现真正的立体声空间音频。
+     */
+    public void setSpatialVolumes(float l, float r) {
+        this.spatialVolumeL = l;
+        this.spatialVolumeR = r;
     }
 
-    /** 对立体声PCM数据应用声道屏蔽（清零禁用声道） */
-    private short[] applyChannelMask(short[] pcm) {
-        if (leftOn && rightOn) return pcm;
-        if (channels < 2) return pcm; // 单声道不需要处理
-        if (!leftOn && !rightOn) {
-            // 两个声道都禁用：全部清零
-            for (int i = 0; i < pcm.length; i++) pcm[i] = 0;
+    /**
+     * 对立体声 PCM 数据应用独立的左右声道增益。
+     * 立体声交错格式 [L][R][L][R]...，每个采样 16bit。
+     * 左声道（偶数索引）× spatialVolumeL，右声道（奇数索引）× spatialVolumeR。
+     */
+    private short[] applySpatialGain(short[] pcm) {
+        if (channels < 2) {
+            // 单声道：应用左右声道平均增益
+            float monoGain = (spatialVolumeL + spatialVolumeR) / 2f;
+            if (monoGain >= 1f) return pcm; // 无需处理
+            for (int i = 0; i < pcm.length; i++) {
+                pcm[i] = (short) Math.clamp(pcm[i] * monoGain, -32768, 32767);
+            }
             return pcm;
         }
-        if (!leftOn) {
-            // 只禁用左声道：清零偶数位(L)
-            for (int i = 0; i < pcm.length; i += 2) pcm[i] = 0;
-        } else {
-            // 只禁用右声道：清零奇数位(R)
-            for (int i = 1; i < pcm.length; i += 2) pcm[i] = 0;
+        // 立体声：左声道 × spatialVolumeL，右声道 × spatialVolumeR
+        if (spatialVolumeL >= 1f && spatialVolumeR >= 1f) return pcm; // 无需处理
+        for (int i = 0; i + 1 < pcm.length; i += 2) {
+            pcm[i]     = (short) Math.clamp(pcm[i]     * spatialVolumeL, -32768, 32767);
+            pcm[i + 1] = (short) Math.clamp(pcm[i + 1] * spatialVolumeR, -32768, 32767);
         }
         return pcm;
     }
 
-    private double lastDist = -1;
-
-    /** 设置音源位置并根据与监听者的距离手动计算增益 */
-    public void updatePositionAndGain(double srcX, double srcY, double srcZ,
-                                       double listenerX, double listenerY, double listenerZ) {
-        if (source == 0) return;
-        AL10.alSource3f(source, AL10.AL_POSITION, (float) srcX, (float) srcY, (float) srcZ);
-
-        double dx = srcX - listenerX, dy = srcY - listenerY, dz = srcZ - listenerZ;
-        double dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        lastDist = dist;
-
-        // 手动距离衰减: 4格内满音量 → 128格外完全静音
-        float spatialGain;
-        if (dist <= 4) {
-            spatialGain = 1f;
-        } else if (dist >= 128) {
-            spatialGain = 0f;
-        } else {
-            // 线性衰减: 4格=1.0 → 128格=0.0
-            spatialGain = (float) (1.0 - (dist - 4) / (128 - 4));
-            // 逆距离衰减(更自然): spatialGain = (float) (4.0 / dist);
-        }
-        spatialVolume = spatialGain;
-    }
-
-    private float spatialVolume = 1f;
     private long totalSamplesConsumed = 0;
     private long prebufSamples = -1; // 首次播放前的预缓冲采样数
 
@@ -92,9 +74,6 @@ public class OpenAlAudioPlayer {
         if (prebufSamples < 0) return 0; // 还没开始播
         return totalSamplesConsumed - prebufSamples;
     }
-
-    /** 获取上次计算的距离（调试用） */
-    public double getLastDistance() { return lastDist; }
 
     /** Called every tick - drains PCM queue into OpenAL buffers */
     public void update() {
@@ -113,7 +92,7 @@ public class OpenAlAudioPlayer {
             short[] pcm = queue.poll();
             if (pcm != null) {
                 totalSamplesConsumed += pcm.length / Math.max(1, channels);
-                pcm = applyChannelMask(pcm);
+                pcm = applySpatialGain(pcm);
                 AL10.alBufferData(buf, fmt, pcm, sampleRate);
             } else {
                 // 队列空：填充静音避免旧数据重放导致卡顿
@@ -125,14 +104,14 @@ public class OpenAlAudioPlayer {
         }
 
         // if never started and we have data, fill all buffers and play
-        AL10.alSourcef(source, AL10.AL_GAIN, volume * spatialVolume);
+        AL10.alSourcef(source, AL10.AL_GAIN, volume);
 
         if (!started && !queue.isEmpty()) {
             for (int buf : buffers) {
                 short[] pcm = queue.poll();
                 if (pcm != null) {
                     totalSamplesConsumed += pcm.length / Math.max(1, channels);
-                    pcm = applyChannelMask(pcm);
+                    pcm = applySpatialGain(pcm);
                     AL10.alBufferData(buf, fmt, pcm, sampleRate);
                     AL10.alSourceQueueBuffers(source, buf);
                 }

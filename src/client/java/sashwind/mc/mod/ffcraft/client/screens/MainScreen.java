@@ -266,7 +266,7 @@ public class MainScreen extends Screen implements ImGuiRenderable {
 
         // ==== SETTINGS ROW ====
         int[] vol = {pb.volume()}; ImGui.text("音量"); ImGui.sameLine(); ImGui.setNextItemWidth(70f);
-        if (ImGui.sliderInt("##vol", vol, 0, 100, "%d%%", 0)) {
+        if (ImGui.sliderInt("##vol", vol, 0, 300, "%d%%", 0)) {
             VideoPlayerClientNetworking.updatePlayback(player.id(), pb.status(), pb.mode(), ci, vol[0]);
             sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.setGlobalVolume(vol[0] / 100f);
         }
