@@ -30,7 +30,7 @@
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric-api": "*",
-    "minecraft": ">=1.21",
+    "minecraft": "26.1.x",
     "fabric-gui-imgui": ">=1.0"
   }
 }
