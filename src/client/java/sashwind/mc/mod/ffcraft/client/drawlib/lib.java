@@ -36,7 +36,16 @@ import java.util.logging.Logger;
 public class lib {
     boolean closed = false;
     int POSx, POSy, POSz;
-    VertexFormat.Mode VFM;
+    TopologyCompat VFM;
+
+    private static VertexFormat.Mode toMode(TopologyCompat t) {
+        return switch (t) {
+            case TRIANGLES -> VertexFormat.Mode.TRIANGLES;
+            case LINES -> VertexFormat.Mode.LINES;
+            case DEBUG_LINE_STRIP -> VertexFormat.Mode.DEBUG_LINE_STRIP;
+            case QUADS -> VertexFormat.Mode.QUADS;
+        };
+    }
     public ArrayList<Vertex> vertices = new ArrayList<>();
     public AbstractTexture WAYPOINT_TEXTURE;
     public RenderPipeline FILLED_THROUGH_WALLS;
@@ -63,16 +72,17 @@ public class lib {
         OVERLAY_WHITE = dt;
     }
 
-    public lib(int x, int y, int z, VertexFormat.Mode VertexFormatMode) {
+    public lib(int x, int y, int z, TopologyCompat topo) {
         POSx = x; POSy = y; POSz = z;
-        VFM = VertexFormatMode;
+        VFM = topo;
+        VertexFormat.Mode mode = toMode(VFM);
 
-        if (VFM == VertexFormat.Mode.LINES || VFM == VertexFormat.Mode.DEBUG_LINE_STRIP) {
+        if (VFM.isLine()) {
             // 线框模式：使用自定义管线（NO_OVERLAY + NO_FOG），原版管线不支持 line 拓扑
             // 仅在放置参考点时使用，此时通常无光影
             RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.ENTITY_EMISSIVE_SNIPPET)
                     .withLocation(Identifier.fromNamespaceAndPath(MOD_ID, "pipeline/entity_translucent_emissive"))
-                    .withVertexFormat(DefaultVertexFormat.ENTITY, VFM)
+                    .withVertexFormat(DefaultVertexFormat.ENTITY, mode)
                     .withShaderDefine("NO_OVERLAY")
                     .withShaderDefine("NO_FOG")
                     .withSampler("Sampler0")
@@ -134,7 +144,7 @@ public class lib {
         Vec3 camera = context.levelState().cameraRenderState.pos;
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
-        buffer = new BufferBuilder(ALLOCATOR, VFM, FILLED_THROUGH_WALLS.getVertexFormat());
+        buffer = new BufferBuilder(ALLOCATOR, toMode(VFM), FILLED_THROUGH_WALLS.getVertexFormat());
         renderFilledBox(matrices.last().pose(), buffer, waypointState.r(), waypointState.g(), waypointState.b(), waypointState.a());
         matrices.popPose();
     }
@@ -178,11 +188,11 @@ public class lib {
     public void draw(Minecraft client, RenderPipeline pipeline, MeshData builtBuffer, MeshData.DrawState drawParameters, GpuBuffer verts, VertexFormat format) {
         if (closed) return;
         GpuBuffer indices; VertexFormat.IndexType indexType;
-        if (VFM == VertexFormat.Mode.QUADS) {
+        if (VFM.isQuads()) {
             builtBuffer.sortQuads(ALLOCATOR, RenderSystem.getProjectionType().vertexSorting());
             indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(builtBuffer.indexBuffer());
             indexType = builtBuffer.drawState().indexType();
-        } else if (VFM == VertexFormat.Mode.LINES) {
+        } else if (VFM == TopologyCompat.LINES) {
             int vertexCount = drawParameters.vertexCount();
             ByteBuffer idxBuffer = MemoryUtil.memAlloc(vertexCount * 2);
             for (int i = 0; i < vertexCount; i++) idxBuffer.putShort((short) i);
@@ -191,7 +201,7 @@ public class lib {
             indexType = VertexFormat.IndexType.SHORT;
             MemoryUtil.memFree(idxBuffer);
         } else {
-            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer = RenderSystem.getSequentialBuffer(VFM);
+            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer = RenderSystem.getSequentialBuffer(toMode(VFM));
             indices = shapeIndexBuffer.getBuffer(drawParameters.indexCount());
             indexType = shapeIndexBuffer.type();
         }

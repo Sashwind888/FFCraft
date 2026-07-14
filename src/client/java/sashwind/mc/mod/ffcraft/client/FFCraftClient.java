@@ -18,6 +18,7 @@ import net.minecraft.world.InteractionResult;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryUtil;
 import sashwind.mc.mod.ffcraft.FFCraft;
+import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
 import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import com.mojang.blaze3d.platform.InputConstants;
@@ -88,9 +89,9 @@ public class FFCraftClient implements ClientModInitializer {
 
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
 
-            wd = new WorldDraw(0, 100, 0, VertexFormat.Mode.TRIANGLES);
-            wd2 = new WorldDraw(0, 100, 0, VertexFormat.Mode.DEBUG_LINE_STRIP);
-            wd3 = new WorldDraw(0,0,0,VertexFormat.Mode.DEBUG_LINE_STRIP);
+            wd = new WorldDraw(0, 100, 0, TopologyCompat.TRIANGLES);
+            wd2 = new WorldDraw(0, 100, 0, TopologyCompat.DEBUG_LINE_STRIP);
+            wd3 = new WorldDraw(0,0,0, TopologyCompat.DEBUG_LINE_STRIP);
             wd.init();
             wd2.init();
             wd3.init();

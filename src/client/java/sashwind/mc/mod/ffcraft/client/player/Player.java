@@ -10,6 +10,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
+import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
 import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
 import sashwind.mc.mod.ffcraft.client.state.ClientScreenCreationManager;
 import sashwind.mc.mod.ffcraft.client.state.ScreenCreationSession;
@@ -150,8 +151,8 @@ public class Player {
     }
 
     public static void clientStart() {
-        wd = new WorldDraw(0, 0, 0, VertexFormat.Mode.DEBUG_LINE_STRIP);
-        wd2 = new WorldDraw(0, 0, 0, VertexFormat.Mode.DEBUG_LINE_STRIP);
+        wd = new WorldDraw(0, 0, 0, TopologyCompat.DEBUG_LINE_STRIP);
+        wd2 = new WorldDraw(0, 0, 0, TopologyCompat.DEBUG_LINE_STRIP);
 
         wd.init();
         wd2.init();
