@@ -33,10 +33,11 @@
 
 1. 确保已安装 **Fabric Loader** 和 **Fabric API**
 2. 安装前置模组 **ImGui**
-3. 前往 [Releases 页面](https://github.com/Sashwind888/FFCraft/releases)
-4. 下载对应游戏版本的最新构建 `.jar` 文件
-5. 放入 Minecraft 的 `mods` 文件夹
-6. 启动游戏
+3. 安装前置模组 **[DrawLib](https://github.com/Sashwind888/DrawLib/releases)**
+4. 前往 [Releases 页面](https://github.com/Sashwind888/FFCraft/releases)
+5. 下载对应游戏版本的最新构建 `.jar` 文件
+6. 放入 Minecraft 的 `mods` 文件夹
+7. 启动游戏
 
 ### 开发者
 
