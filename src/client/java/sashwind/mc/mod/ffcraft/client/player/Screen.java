@@ -3,8 +3,8 @@ package sashwind.mc.mod.ffcraft.client.player;
 import com.mojang.blaze3d.platform.NativeImage;
 import org.joml.Vector3d;
 import org.lwjgl.system.MemoryUtil;
-import sashwind.mc.mod.ffcraft.client.drawlib.Vertex;
-import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
+import sashwind.mc.mod.drawlib.client.WorldDraw;
+import sashwind.mc.mod.drawlib.client.Vertex;
 
 import java.util.ArrayList;
 import java.util.List;
