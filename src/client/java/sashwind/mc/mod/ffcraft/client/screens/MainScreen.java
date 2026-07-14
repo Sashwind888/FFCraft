@@ -716,8 +716,8 @@ public class MainScreen extends Screen implements ImGuiRenderable {
 
     private void createScreenFor(VideoPlayerData player) {
         if (ClientScreenCreationManager.start(player.id(), player.name() + "-screen")) {
-            Minecraft.getInstance().setScreen(null);
-            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() -> Minecraft.getInstance().setScreen(new MainScreen())));
+            sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), null);
+            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() -> sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
         }
     }
 

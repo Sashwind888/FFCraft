@@ -1,7 +1,6 @@
 package sashwind.mc.mod.ffcraft.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -11,6 +10,7 @@ import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.texture.TextureContents;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -18,7 +18,9 @@ import net.minecraft.world.InteractionResult;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryUtil;
 import sashwind.mc.mod.ffcraft.FFCraft;
+import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
 import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
+import sashwind.mc.mod.ffcraft.client.drawlib.lib;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import com.mojang.blaze3d.platform.InputConstants;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
@@ -88,9 +90,9 @@ public class FFCraftClient implements ClientModInitializer {
 
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
 
-            wd = new WorldDraw(0, 100, 0, VertexFormat.Mode.TRIANGLES);
-            wd2 = new WorldDraw(0, 100, 0, VertexFormat.Mode.DEBUG_LINE_STRIP);
-            wd3 = new WorldDraw(0,0,0,VertexFormat.Mode.DEBUG_LINE_STRIP);
+            wd = new WorldDraw(0, 100, 0, TopologyCompat.TRIANGLES);
+            wd2 = new WorldDraw(0, 100, 0, TopologyCompat.DEBUG_LINE_STRIP);
+            wd3 = new WorldDraw(0,0,0, TopologyCompat.DEBUG_LINE_STRIP);
             wd.init();
             wd2.init();
             wd3.init();
@@ -122,7 +124,7 @@ public class FFCraftClient implements ClientModInitializer {
 
             while (this.openGuiKey.consumeClick()) {
                 if (client.player != null) {
-                    client.setScreen(new MainScreen());
+                    lib.setScreenCompat(client, new MainScreen());
                 }
             }
 

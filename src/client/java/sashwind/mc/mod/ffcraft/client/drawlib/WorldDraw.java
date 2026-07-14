@@ -1,7 +1,6 @@
 package sashwind.mc.mod.ffcraft.client.drawlib;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.Minecraft;
@@ -26,9 +25,9 @@ public class WorldDraw {
     private static final String MOD_ID = "ffcraft";
     private final Identifier VIDEO_TEXTURE_ID;
 
-    public WorldDraw(int x, int y, int z, VertexFormat.Mode VertexFormatMode) {
+    public WorldDraw(int x, int y, int z, TopologyCompat topo) {
         VIDEO_TEXTURE_ID = Identifier.fromNamespaceAndPath(MOD_ID, "stream_" + TEXTURE_ID_COUNTER.getAndIncrement());
-        lib = new lib(x, y, z, VertexFormatMode);
+        lib = new lib(x, y, z, topo);
     }
 
     public void init() {

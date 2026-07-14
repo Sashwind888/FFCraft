@@ -1,5 +1,7 @@
 package sashwind.mc.mod.ffcraft.client.drawlib;
 
+import com.mojang.blaze3d.IndexType;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
@@ -29,14 +31,16 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Optional;
 import java.util.OptionalDouble;
-import java.util.OptionalInt;
 import java.util.logging.Logger;
 
 public class lib {
+    private static final Logger LOGGER = Logger.getLogger("FFCraft-lib");
+
     boolean closed = false;
     int POSx, POSy, POSz;
-    VertexFormat.Mode VFM;
+    TopologyCompat VFM;
     public ArrayList<Vertex> vertices = new ArrayList<>();
     public AbstractTexture WAYPOINT_TEXTURE;
     public RenderPipeline FILLED_THROUGH_WALLS;
@@ -45,9 +49,22 @@ public class lib {
     private static final java.util.concurrent.atomic.AtomicInteger PLACEHOLDER_COUNTER =
             new java.util.concurrent.atomic.AtomicInteger(0);
     private static final String MOD_ID = "ffcraft";
+    private int frameSkip; // 每60帧打印一次，避免刷屏
 
-    // Overlay 专用 1x1 白色纹理（避免绑定视频纹理导致首像素颜色污染画面）
     private static AbstractTexture OVERLAY_WHITE;
+
+    // ──────────── TopologyCompat → PrimitiveTopology 映射 ────────────
+
+    private static PrimitiveTopology toPrimitiveTopology(TopologyCompat t) {
+        return switch (t) {
+            case TRIANGLES -> PrimitiveTopology.TRIANGLES;
+            case LINES -> PrimitiveTopology.LINES;
+            case DEBUG_LINE_STRIP -> PrimitiveTopology.DEBUG_LINE_STRIP;
+            case QUADS -> PrimitiveTopology.QUADS;
+        };
+    }
+
+    // ──────────── 业务逻辑 ────────────
 
     private static void ensureOverlayWhite() {
         if (OVERLAY_WHITE != null) return;
@@ -56,33 +73,31 @@ public class lib {
         DynamicTexture dt = new DynamicTexture(MOD_ID + ".overlay", 1, 1, true);
         tm.register(id, dt);
         NativeImage img = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
-        img.setPixel(0, 0, 0xFFFFFFFF); // 白色不透明
+        img.setPixel(0, 0, 0xFFFFFFFF);
         dt.setPixels(img);
         dt.upload();
         img.close();
         OVERLAY_WHITE = dt;
     }
 
-    public lib(int x, int y, int z, VertexFormat.Mode VertexFormatMode) {
+    public lib(int x, int y, int z, TopologyCompat topo) {
         POSx = x; POSy = y; POSz = z;
-        VFM = VertexFormatMode;
+        VFM = topo;
 
-        if (VFM == VertexFormat.Mode.LINES || VFM == VertexFormat.Mode.DEBUG_LINE_STRIP) {
-            // 线框模式：使用自定义管线（NO_OVERLAY + NO_FOG），原版管线不支持 line 拓扑
-            // 仅在放置参考点时使用，此时通常无光影
+        if (VFM.isLine()) {
+            PrimitiveTopology pt = toPrimitiveTopology(VFM);
             RenderPipeline pipeline = RenderPipeline.builder(RenderPipelines.ENTITY_EMISSIVE_SNIPPET)
                     .withLocation(Identifier.fromNamespaceAndPath(MOD_ID, "pipeline/entity_translucent_emissive"))
-                    .withVertexFormat(DefaultVertexFormat.ENTITY, VFM)
+                    .withVertexBinding(0, DefaultVertexFormat.ENTITY)
+                    .withPrimitiveTopology(pt)
                     .withShaderDefine("NO_OVERLAY")
                     .withShaderDefine("NO_FOG")
-                    .withSampler("Sampler0")
-                    .withSampler("Sampler1")
-                    .withSampler("Sampler2")
                     .build();
-            FILLED_THROUGH_WALLS = RenderPipelines.register(pipeline);
+            FILLED_THROUGH_WALLS = pipeline;
+            LOGGER.info("[ctor] Line pipeline built: " + VFM + " loc=" + FILLED_THROUGH_WALLS.getLocation());
         } else {
-            // 面片模式（TRIANGLES/QUADS）：直接使用原版管线，Iris 原生兼容
             FILLED_THROUGH_WALLS = RenderPipelines.ENTITY_TRANSLUCENT_EMISSIVE;
+            LOGGER.info("[ctor] Using ENTITY_TRANSLUCENT_EMISSIVE for " + VFM);
         }
     }
 
@@ -100,14 +115,13 @@ public class lib {
 
     public void renderAndDrawWaypoint(LevelRenderContext context) {
         if (closed) return;
-        // 纹理上传必须在 render pass 之外完成
         ensureOverlayWhite();
         if (WAYPOINT_TEXTURE == null) {
             Identifier id = Identifier.fromNamespaceAndPath(MOD_ID, "_placeholder" + PLACEHOLDER_COUNTER.getAndIncrement());
             TextureManager textureManager = Minecraft.getInstance().getTextureManager();
             DynamicTexture dt = new DynamicTexture(MOD_ID + ".placeholder", 1, 1, true);
             textureManager.register(id, dt);
-            NativeImage img = createPlaceholderImage(1,1);
+            NativeImage img = createPlaceholderImage(1, 1);
             dt.setPixels(img);
             dt.upload();
             img.close();
@@ -122,21 +136,29 @@ public class lib {
         try {
             ALLOCATOR.clear();
         } catch (IllegalStateException e) {
-            Logger.getLogger("WorldDraw -> lib").warning("ALLOCATOR已被 clear！");
+            LOGGER.warning("ALLOCATOR.clear() failed: " + e);
             buffer = null;
             return;
         }
         if (vertices.isEmpty() || WAYPOINT_TEXTURE == null) {
             buffer = null;
+            if (frameSkip++ % 60 == 0) LOGGER.info("[render] SKIP v=" + vertices.size() + " tex=" + (WAYPOINT_TEXTURE != null));
             return;
         }
         PoseStack matrices = context.poseStack();
         Vec3 camera = context.levelState().cameraRenderState.pos;
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
-        buffer = new BufferBuilder(ALLOCATOR, VFM, FILLED_THROUGH_WALLS.getVertexFormat());
+        buffer = new BufferBuilder(ALLOCATOR, toPrimitiveTopology(VFM), FILLED_THROUGH_WALLS.getVertexFormatBinding(0));
         renderFilledBox(matrices.last().pose(), buffer, waypointState.r(), waypointState.g(), waypointState.b(), waypointState.a());
         matrices.popPose();
+        if (frameSkip++ % 60 == 0) {
+            Vertex v0 = vertices.get(0);
+            LOGGER.info("[render] v=" + vertices.size() + " topo=" + VFM
+                + " cam=" + String.format("%.1f,%.1f,%.1f", camera.x, camera.y, camera.z)
+                + " pos0=" + String.format("%.1f,%.1f,%.1f", v0.x, v0.y, v0.z)
+                + " fmtSz=" + FILLED_THROUGH_WALLS.getVertexFormatBinding(0).getVertexSize());
+        }
     }
 
     public void renderFilledBox(Matrix4f positionMatrix, BufferBuilder buffer, float red, float green, float blue, float alpha) {
@@ -146,7 +168,7 @@ public class lib {
                     .setColor(1f, 1f, 1f, v.a)
                     .setUv(v.u, v.v)
                     .setUv1(0, 0)
-                    .setUv2(255, 255)   // emissive：始终最大亮度
+                    .setUv2(255, 255)
                     .setNormal(v.nx, v.ny, v.nz);
         }
     }
@@ -156,64 +178,79 @@ public class lib {
         MeshData builtBuffer = buffer.buildOrThrow();
         MeshData.DrawState drawParameters = builtBuffer.drawState();
         VertexFormat format = drawParameters.format();
-        GpuBuffer vertices = upload(drawParameters, format, builtBuffer);
-        draw(client, pipeline, builtBuffer, drawParameters, vertices, format);
-        if (vertexBuffer != null) vertexBuffer.rotate();
-    }
+        int vc = drawParameters.vertexCount();
+        int ic = drawParameters.indexCount();
+        if (frameSkip++ % 60 == 0) LOGGER.info("[draw] vc=" + vc + " ic=" + ic + " topo=" + VFM + " fmt=" + format.getVertexSize());
 
-    public GpuBuffer upload(MeshData.DrawState drawParameters, VertexFormat format, MeshData builtBuffer) {
-        int vertexBufferSize = drawParameters.vertexCount() * format.getVertexSize();
+        int vertexBufferSize = vc * format.getVertexSize();
         int bufferCapacity = vertexBufferSize + (vertexBufferSize >> 2);
         if (vertexBuffer == null || vertexBuffer.size() < vertexBufferSize) {
             if (vertexBuffer != null) vertexBuffer.close();
-            vertexBuffer = new MappableRingBuffer(() -> MOD_ID + " example render pipeline", GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_MAP_WRITE, bufferCapacity);
+            vertexBuffer = new MappableRingBuffer(() -> MOD_ID + " example render pipeline",
+                    GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_MAP_WRITE, bufferCapacity);
+            if (frameSkip++ % 60 == 0) LOGGER.info("[draw] new MappableRingBuffer size=" + bufferCapacity);
         }
-        CommandEncoder commandEncoder = RenderSystem.getDevice().createCommandEncoder();
-        try (GpuBuffer.MappedView mappedView = commandEncoder.mapBuffer(vertexBuffer.currentBuffer().slice(0, builtBuffer.vertexBuffer().remaining()), false, true)) {
-            MemoryUtil.memCopy(builtBuffer.vertexBuffer(), mappedView.data());
+        GpuBuffer verts = vertexBuffer.currentBuffer();
+        GpuBufferSlice uploadSlice = verts.slice(0, builtBuffer.vertexBuffer().remaining());
+        try (GpuBufferSlice.MappedView mv = uploadSlice.map(false, true)) {
+            MemoryUtil.memCopy(builtBuffer.vertexBuffer(), mv.data());
+        } catch (Exception e) {
+            LOGGER.warning("[draw] vertex upload failed: " + e);
         }
-        return vertexBuffer.currentBuffer();
-    }
 
-    public void draw(Minecraft client, RenderPipeline pipeline, MeshData builtBuffer, MeshData.DrawState drawParameters, GpuBuffer verts, VertexFormat format) {
         if (closed) return;
-        GpuBuffer indices; VertexFormat.IndexType indexType;
-        if (VFM == VertexFormat.Mode.QUADS) {
+        GpuBuffer indices; IndexType indexType;
+        if (VFM.isQuads()) {
             builtBuffer.sortQuads(ALLOCATOR, RenderSystem.getProjectionType().vertexSorting());
-            indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(builtBuffer.indexBuffer());
-            indexType = builtBuffer.drawState().indexType();
-        } else if (VFM == VertexFormat.Mode.LINES) {
-            int vertexCount = drawParameters.vertexCount();
-            ByteBuffer idxBuffer = MemoryUtil.memAlloc(vertexCount * 2);
-            for (int i = 0; i < vertexCount; i++) idxBuffer.putShort((short) i);
+            indices = RenderSystem.getDevice().createBuffer(
+                    () -> "immediate_index", GpuBuffer.USAGE_INDEX, builtBuffer.indexBuffer());
+            indexType = drawParameters.indexType();
+        } else if (VFM == TopologyCompat.LINES) {
+            int vc2 = drawParameters.vertexCount();
+            ByteBuffer idxBuffer = MemoryUtil.memAlloc(vc2 * 2);
+            for (int i = 0; i < vc2; i++) idxBuffer.putShort((short) i);
             idxBuffer.flip();
-            indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(idxBuffer);
-            indexType = VertexFormat.IndexType.SHORT;
+            indices = RenderSystem.getDevice().createBuffer(
+                    () -> "immediate_line_index", GpuBuffer.USAGE_INDEX, idxBuffer);
+            indexType = IndexType.SHORT;
             MemoryUtil.memFree(idxBuffer);
         } else {
-            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer = RenderSystem.getSequentialBuffer(VFM);
-            indices = shapeIndexBuffer.getBuffer(drawParameters.indexCount());
+            RenderSystem.AutoStorageIndexBuffer shapeIndexBuffer =
+                    RenderSystem.getSequentialBuffer(toPrimitiveTopology(VFM));
+            indices = shapeIndexBuffer.getBuffer(ic);
             indexType = shapeIndexBuffer.type();
         }
         GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms()
-                .writeTransform(RenderSystem.getModelViewMatrix(), COLOR_MODULATOR, MODEL_OFFSET, TEXTURE_MATRIX);
-        try (RenderPass renderPass = RenderSystem.getDevice().createCommandEncoder()
-                .createRenderPass(() -> MOD_ID + " example render pipeline rendering", client.getMainRenderTarget().getColorTextureView(), OptionalInt.empty(), client.getMainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
+                .writeTransform(RenderSystem.getModelViewMatrixCopy(), COLOR_MODULATOR, MODEL_OFFSET, TEXTURE_MATRIX);
+        com.mojang.blaze3d.pipeline.RenderTarget rt = client.gameRenderer.mainRenderTarget();
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        if (frameSkip++ % 60 == 0) LOGGER.info("[draw] RT hasDepth=" + (rt.getDepthTexture() != null) + " colorView=" + (rt.getColorTextureView() != null));
+        try (RenderPass renderPass = encoder.createRenderPass(
+                () -> MOD_ID + " example render pipeline rendering",
+                client.gameRenderer.mainRenderTarget().getColorTextureView(), Optional.empty(),
+                client.gameRenderer.mainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
             GpuSampler pointSampler = RenderSystem.getSamplerCache().getSampler(
                     AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
                     FilterMode.NEAREST, FilterMode.NEAREST, false);
             renderPass.bindTexture("Sampler0", WAYPOINT_TEXTURE.getTextureView(), pointSampler);
-            // lightmap: 用 Minecraft 的真实光照贴图（Iris ENTITIES_ALPHA 必须）
             renderPass.bindTexture("Sampler2", client.gameRenderer.lightmap(), pointSampler);
             renderPass.bindTexture("Sampler1", OVERLAY_WHITE.getTextureView(), pointSampler);
             renderPass.setPipeline(pipeline);
             RenderSystem.bindDefaultUniforms(renderPass);
             renderPass.setUniform("DynamicTransforms", dynamicTransforms);
-            renderPass.setVertexBuffer(0, verts);
+            renderPass.setVertexBuffer(0, verts.slice());
             renderPass.setIndexBuffer(indices, indexType);
-            renderPass.drawIndexed(0, 0, drawParameters.indexCount(), 1);
+            renderPass.drawIndexed(ic, 1, 0, 0, 0);
+            if (frameSkip++ % 60 == 0) LOGGER.info("[draw] DONE: drawIndexed(count=" + ic + " inst=1)");
+        } catch (Exception e) {
+            LOGGER.warning("[draw] render pass failed: " + e);
         }
         builtBuffer.close();
+        if (vertexBuffer != null) vertexBuffer.rotate();
+    }
+
+    public static void setScreenCompat(Minecraft client, net.minecraft.client.gui.screens.Screen screen) {
+        client.setScreenAndShow(screen);
     }
 
     public record WaypointRenderState(int x, int y, int z, float r, float g, float b, float a) {}

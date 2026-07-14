@@ -8,6 +8,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.Level;
 import org.joml.Vector3d;
 import org.lwjgl.system.MemoryUtil;
+import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
 import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
 import sashwind.mc.mod.ffcraft.client.player.Screen;
 import sashwind.mc.mod.ffcraft.common.model.ScreenVertex;
@@ -15,8 +16,6 @@ import sashwind.mc.mod.ffcraft.common.model.UvTransform;
 import sashwind.mc.mod.ffcraft.common.model.VideoPlayerData;
 import sashwind.mc.mod.ffcraft.common.model.VideoPlayerSnapshot;
 import sashwind.mc.mod.ffcraft.common.model.VideoScreenData;
-
-import com.mojang.blaze3d.vertex.VertexFormat;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -152,7 +151,7 @@ public final class ClientScreenRenderManager {
     private static void syncPlayerWorldDraw(UUID pid, VideoPlayerSnapshot snapshot) {
         WorldDraw wd = PLAYER_WORLDDRAWS.get(pid);
         if (wd == null) {
-            wd = new WorldDraw(0, 0, 0, VertexFormat.Mode.TRIANGLES);
+            wd = new WorldDraw(0, 0, 0, TopologyCompat.TRIANGLES);
             wd.init();
             loadPlaceholder();
             if (cachedPlaceholder != null) {
