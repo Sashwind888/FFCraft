@@ -145,6 +145,7 @@ public class OpenAlAudioPlayer {
             AL10.alDeleteBuffers(buffers);
             source = 0;
         }
+        if (queue != null) queue.clear();
     }
 
     public boolean isRunning() { return running; }

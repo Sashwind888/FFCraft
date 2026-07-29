@@ -57,6 +57,7 @@ public class Player {
         for (Screen s : screens) {
             s.close();
         }
+        screens.clear();
     }
 
     public static void clientEndTick() {
@@ -156,6 +157,12 @@ public class Player {
 
         wd.init();
         wd2.init();
+    }
+
+    public static void clientStop() {
+        if (wd != null) { wd.close(); wd = null; }
+        if (wd2 != null) { wd2.close(); wd2 = null; }
+        isSetVertices = null;
     }
 
     private static void drawBlock(float x, float y, float z) {

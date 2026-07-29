@@ -5,7 +5,7 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 
 public final class VideoPlayerServerLifecycle {
-    private static int tickCounter = 0;
+    private static long tickCounter = 0;
 
     private VideoPlayerServerLifecycle() {
     }

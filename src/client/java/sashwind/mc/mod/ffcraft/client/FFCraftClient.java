@@ -118,6 +118,16 @@ public class FFCraftClient implements ClientModInitializer {
             }
         });
 
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            if (wd != null) { wd.close(); wd = null; }
+            if (wd2 != null) { wd2.close(); wd2 = null; }
+            if (wd3 != null) { wd3.close(); wd3 = null; }
+            Player.clientStop();
+            sashwind.mc.mod.drawlib.client.lib.cleanupStatics();
+            if (pendingBackgroundImage != null) { pendingBackgroundImage.close(); pendingBackgroundImage = null; }
+            if (pendingPlaceholderImage != null) { pendingPlaceholderImage.close(); pendingPlaceholderImage = null; }
+        });
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             Player.clientEndTick();
 

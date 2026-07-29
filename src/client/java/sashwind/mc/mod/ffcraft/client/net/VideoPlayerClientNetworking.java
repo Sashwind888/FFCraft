@@ -13,9 +13,9 @@ public final class VideoPlayerClientNetworking {
 
     private VideoPlayerClientNetworking() {}
 
+    private static volatile boolean syncRequested = false;
+
     public static void register() {
-        // 接收 raw byte channel（兼容 Bukkit 插件发送的原始 JSON 字节）
-        // CustomPacketPayload 类型仍需注册以便发送
         ClientPlayNetworking.registerGlobalReceiver(RawPayload.TYPE, (payload, context) -> {
             String json = new String(payload.data(), StandardCharsets.UTF_8);
             handle(json);
@@ -23,12 +23,18 @@ public final class VideoPlayerClientNetworking {
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             ClientVideoPlayerCache.replace(new VideoPlayerSnapshot(java.util.List.of()));
-            final boolean[] sent = {false};
-            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(cl -> {
-                if (!sent[0] && net.minecraft.client.Minecraft.getInstance().getConnection() != null) {
-                    sent[0] = true; requestSync();
-                }
-            });
+            syncRequested = false;
+        });
+
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            syncRequested = false;
+        });
+
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(cl -> {
+            if (!syncRequested && net.minecraft.client.Minecraft.getInstance().getConnection() != null) {
+                syncRequested = true;
+                requestSync();
+            }
         });
     }
 

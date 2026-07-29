@@ -157,17 +157,21 @@ public class StreamPuller extends Thread {
                     NativeImage img = createNativeImage(task.width, task.height, task.raw);
                     if (img != null) {
                         hasVideoFrame = true;
-                        frameQueue.put(img);
+                        try {
+                            frameQueue.put(img);
+                        } catch (InterruptedException e) {
+                            img.close();
+                            break;
+                        }
                     }
                 } catch (InterruptedException e) {
                     break;
                 }
             }
-            // 清理残留任务
             VideoTask task;
             while ((task = videoQueue.poll()) != null) {
                 NativeImage img = createNativeImage(task.width, task.height, task.raw);
-                if (img != null && !frameQueue.offer(img)) img.close();
+                if (img != null) img.close();
             }
         }
 
@@ -175,12 +179,13 @@ public class StreamPuller extends Thread {
     }
 
     private static NativeImage createNativeImage(int width, int height, byte[] raw) {
+        NativeImage img = null;
         try {
             int border = 2;
             int fw = width + border * 2, fh = height + border * 2;
             int total = fw * fh * 4;
 
-            NativeImage img = new NativeImage(NativeImage.Format.RGBA, fw, fh, false);
+            img = new NativeImage(NativeImage.Format.RGBA, fw, fh, false);
             ByteBuffer dst = MemoryUtil.memByteBuffer(img.getPointer(), total);
             MemoryUtil.memSet(dst, 0);
 
@@ -193,6 +198,7 @@ public class StreamPuller extends Thread {
             return img;
         } catch (Exception e) {
             System.err.println("createNativeImage 错误: " + e.getMessage());
+            if (img != null) img.close();
             return null;
         }
     }
@@ -205,11 +211,15 @@ public class StreamPuller extends Thread {
             try { grabber.stop(); grabber.release(); }
             catch (Exception e) { e.printStackTrace(); }
         }
+        NativeImage img;
+        while ((img = frameQueue.poll()) != null) { img.close(); }
+        videoQueue.clear();
         System.out.println("拉流资源已释放");
     }
 
     public void stopPulling() {
         running = false;
+        if (videoProcessor != null) videoProcessor.shutdown();
         this.interrupt(); // 让阻塞在 grabFrame() 的线程醒来退出
     }
 

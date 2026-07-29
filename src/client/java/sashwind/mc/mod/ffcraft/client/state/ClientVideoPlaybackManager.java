@@ -222,6 +222,10 @@ public class ClientVideoPlaybackManager {
                 OpenAlAudioPlayer ap = audioPlayers.remove(pid);
                 if (ap != null) ap.stop();
                 audioStarted.remove(pid);
+                audioOnlyPlayers.remove(pid);
+                uvRecalculated.remove(pid);
+                audioSampleCount.remove(pid);
+                videoFrameSeq.remove(pid);
                 playbackStartMs.remove(pid);
                 playbackStartSecs.remove(pid);
                 if (pid.equals(lastPlayerId)) lastPlayerId = null;
@@ -507,6 +511,8 @@ public class ClientVideoPlaybackManager {
         audioSampleCount.clear();
         videoFrameSeq.clear();
         uvManuallyEdited.clear();
+        playbackStartMs.clear();
+        playbackStartSecs.clear();
         ClientScreenRenderManager.clearAll();
         lastPlayerId = null;
     }

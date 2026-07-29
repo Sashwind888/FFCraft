@@ -61,6 +61,13 @@ public class MainScreen extends Screen implements ImGuiRenderable {
 
     public MainScreen() { super(Component.translatable("key.screens.mainscreen.title")); }
 
+    @Override
+    public void removed() {
+        super.removed();
+        cachedPlayers.clear();
+        lastSnapshotVersion = Long.MIN_VALUE;
+    }
+
     @Override public void render(ImGuiIO io) {
         syncCache();
         sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.uploadPreviewTexture();
@@ -79,8 +86,12 @@ public class MainScreen extends Screen implements ImGuiRenderable {
         ImFontAtlas fonts = io.getFonts();
         fonts.clearFonts();
         ImFontConfig cfg = new ImFontConfig(); cfg.setSizePixels(FONT_SIZE);
-        if (!tryLoadBuiltinFont(fonts, cfg)) { fonts.addFontDefault(); io.setFontGlobalScale(2.0f); }
-        fonts.build(); cfg.destroy();
+        try {
+            if (!tryLoadBuiltinFont(fonts, cfg)) { fonts.addFontDefault(); io.setFontGlobalScale(2.0f); }
+            fonts.build();
+        } finally {
+            cfg.destroy();
+        }
     }
     private static boolean tryLoadBuiltinFont(ImFontAtlas fonts, ImFontConfig cfg) {
         try {
