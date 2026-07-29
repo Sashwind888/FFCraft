@@ -13,6 +13,8 @@ public final class VideoPlayerClientNetworking {
 
     private VideoPlayerClientNetworking() {}
 
+    private static volatile boolean syncRequested = false;
+
     public static void register() {
         // 接收 raw byte channel（兼容 Bukkit 插件发送的原始 JSON 字节）
         // CustomPacketPayload 类型仍需注册以便发送
@@ -21,14 +23,23 @@ public final class VideoPlayerClientNetworking {
             handle(json);
         });
 
+        // JOIN 时标记需要同步（重置 sent 标记，让 tick 回调在下一帧发送）
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             ClientVideoPlayerCache.replace(new VideoPlayerSnapshot(java.util.List.of()));
-            final boolean[] sent = {false};
-            net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(cl -> {
-                if (!sent[0] && net.minecraft.client.Minecraft.getInstance().getConnection() != null) {
-                    sent[0] = true; requestSync();
-                }
-            });
+            syncRequested = false;
+        });
+
+        // DISCONNECT 时重置状态
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            syncRequested = false;
+        });
+
+        // 只注册一次 tick 回调，通过 syncRequested 标记控制是否发送
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents.END_CLIENT_TICK.register(cl -> {
+            if (!syncRequested && net.minecraft.client.Minecraft.getInstance().getConnection() != null) {
+                syncRequested = true;
+                requestSync();
+            }
         });
     }
 

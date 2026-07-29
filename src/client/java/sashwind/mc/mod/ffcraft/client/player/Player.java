@@ -9,8 +9,8 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3d;
-import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
-import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
+import sashwind.mc.mod.drawlib.client.TopologyCompat;
+import sashwind.mc.mod.drawlib.client.WorldDraw;
 import sashwind.mc.mod.ffcraft.client.state.ClientScreenCreationManager;
 import sashwind.mc.mod.ffcraft.client.state.ScreenCreationSession;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
@@ -56,6 +56,7 @@ public class Player {
         for (Screen s : screens) {
             s.close();
         }
+        screens.clear();
     }
 
     public static void clientEndTick() {
@@ -155,6 +156,14 @@ public class Player {
 
         wd.init();
         wd2.init();
+    }
+
+    /** 客户端停止时清理静态 WorldDraw 资源，避免 GPU 资源泄露 */
+    public static void clientStop() {
+        if (wd != null) { wd.close(); wd = null; }
+        if (wd2 != null) { wd2.close(); wd2 = null; }
+        // 清理可能残留的顶点放置状态
+        isSetVertices = null;
     }
 
     private static void drawBlock(float x, float y, float z) {

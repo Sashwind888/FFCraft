@@ -222,6 +222,10 @@ public class ClientVideoPlaybackManager {
                 OpenAlAudioPlayer ap = audioPlayers.remove(pid);
                 if (ap != null) ap.stop();
                 audioStarted.remove(pid);
+                audioOnlyPlayers.remove(pid);
+                uvRecalculated.remove(pid);
+                audioSampleCount.remove(pid);
+                videoFrameSeq.remove(pid);
                 playbackStartMs.remove(pid);
                 playbackStartSecs.remove(pid);
                 if (pid.equals(lastPlayerId)) lastPlayerId = null;
@@ -507,6 +511,23 @@ public class ClientVideoPlaybackManager {
         audioSampleCount.clear();
         videoFrameSeq.clear();
         uvManuallyEdited.clear();
+        playbackStartMs.clear();
+        playbackStartSecs.clear();
+        // 释放 OpenGL 预览纹理
+        if (previewTexId != 0) {
+            org.lwjgl.opengl.GL11C.glDeleteTextures(previewTexId);
+            previewTexId = 0;
+            previewTexW = 0;
+            previewTexH = 0;
+            previewTexDirty = false;
+            previewPixels = null;
+            loggedFirstUpload = false;
+        }
+        // 释放 NativeImage 占位图
+        if (placeholderImage != null) {
+            placeholderImage.close();
+            placeholderImage = null;
+        }
         ClientScreenRenderManager.clearAll();
         lastPlayerId = null;
     }

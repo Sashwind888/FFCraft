@@ -27,6 +27,7 @@ import sashwind.mc.mod.ffcraft.common.model.VideoPlayerData;
 import sashwind.mc.mod.ffcraft.common.model.VideoScreenData;
 import java.util.*;
 
+
 public class MainScreen extends Screen implements ImGuiRenderable {
     private static final float FONT_SIZE = 30f;
     private static final float ITEM_HEIGHT = 32f;
@@ -61,6 +62,14 @@ public class MainScreen extends Screen implements ImGuiRenderable {
 
     public MainScreen() { super(Component.translatable("key.screens.mainscreen.title")); }
 
+    @Override
+    public void removed() {
+        super.removed();
+        // 清空静态缓存，允许 GC 回收 VideoPlayerData 引用
+        cachedPlayers.clear();
+        lastSnapshotVersion = Long.MIN_VALUE;
+    }
+
     @Override public void render(ImGuiIO io) {
         syncCache();
         sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.uploadPreviewTexture();
@@ -79,8 +88,12 @@ public class MainScreen extends Screen implements ImGuiRenderable {
         ImFontAtlas fonts = io.getFonts();
         fonts.clearFonts();
         ImFontConfig cfg = new ImFontConfig(); cfg.setSizePixels(FONT_SIZE);
-        if (!tryLoadBuiltinFont(fonts, cfg)) { fonts.addFontDefault(); io.setFontGlobalScale(2.0f); }
-        fonts.build(); cfg.destroy();
+        try {
+            if (!tryLoadBuiltinFont(fonts, cfg)) { fonts.addFontDefault(); io.setFontGlobalScale(2.0f); }
+            fonts.build();
+        } finally {
+            cfg.destroy();
+        }
     }
     private static boolean tryLoadBuiltinFont(ImFontAtlas fonts, ImFontConfig cfg) {
         try {
@@ -716,8 +729,8 @@ public class MainScreen extends Screen implements ImGuiRenderable {
 
     private void createScreenFor(VideoPlayerData player) {
         if (ClientScreenCreationManager.start(player.id(), player.name() + "-screen")) {
-            sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), null);
-            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() -> sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
+            sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), null);
+            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() -> sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
         }
     }
 
