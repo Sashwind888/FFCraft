@@ -59,7 +59,11 @@ public final class VideoPlayerServerNetworking {
                 var old = svc.findPlayer(pid.get()).orElseThrow().playbackState();
                 svc.setPlaybackState(pid.get(), new PlaybackState(old.status(), old.mode(), old.currentIndex(), st.apply("seekSeconds"), old.volume(), System.currentTimeMillis()/1000)); syncAll();
             }
-            case "update_screen_uv" -> { svc.updateScreenUv(player, pid.get(), sid.get(), NetworkCodec.parseUv(data.getAsJsonObject("uvTransform"))); syncAll(); }
+            case "update_screen_uv" -> {
+                boolean uvManuallyEdited = data.has("uvManuallyEdited") && data.get("uvManuallyEdited").getAsBoolean();
+                svc.updateScreenUv(player, pid.get(), sid.get(), NetworkCodec.parseUv(data.getAsJsonObject("uvTransform")), uvManuallyEdited);
+                syncAll();
+            }
             case "update_screen_channel" -> {
                 var ch = data.getAsJsonObject("channelState");
                 svc.updateScreenChannel(player, pid.get(), sid.get(), new ScreenChannelState(ch.get("leftEnabled").getAsBoolean(), ch.get("rightEnabled").getAsBoolean())); syncAll();

@@ -88,8 +88,10 @@ public class VideoPlayerSavedData extends SavedData {
             LEVEL_KEY_CODEC.fieldOf("dimension").forGetter(ServerVideoScreen::dimension),
             SCREEN_VERTEX_CODEC.listOf().fieldOf("vertices").forGetter(ServerVideoScreen::vertices),
             UV_TRANSFORM_CODEC.fieldOf("uvTransform").forGetter(ServerVideoScreen::uvTransform),
-            CHANNEL_CODEC.fieldOf("channelState").forGetter(ServerVideoScreen::channelState)
-    ).apply(instance, ServerVideoScreen::new));
+            CHANNEL_CODEC.fieldOf("channelState").forGetter(ServerVideoScreen::channelState),
+            Codec.BOOL.optionalFieldOf("uvManuallyEdited").forGetter(s -> java.util.Optional.of(s.uvManuallyEdited()))
+    ).apply(instance, (id, pid, name, dim, verts, uv, ch, edited) ->
+            new ServerVideoScreen(id, pid, name, dim, verts, uv, ch, edited.orElse(false))));
 
     private static final Codec<ServerVideoPlayer> PLAYER_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.xmap(UUID::fromString, UUID::toString).fieldOf("id").forGetter(player -> player.id()),

@@ -145,6 +145,8 @@ public class OpenAlAudioPlayer {
             AL10.alDeleteBuffers(buffers);
             source = 0;
         }
+        // 清理残留的 PCM 数据，解除对队列的强引用
+        if (queue != null) queue.clear();
     }
 
     public boolean isRunning() { return running; }

@@ -116,6 +116,7 @@ run/
 runs/
 
 .claude
+.idea
 
 CLAUDE.md
 SERVER_API.md

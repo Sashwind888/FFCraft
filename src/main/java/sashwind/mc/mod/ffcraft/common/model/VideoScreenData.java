@@ -13,6 +13,7 @@ public record VideoScreenData(
         ResourceKey<Level> dimension,
         List<ScreenVertex> vertices,
         UvTransform uvTransform,
-        ScreenChannelState channelState
+        ScreenChannelState channelState,
+        boolean uvManuallyEdited
 ) {
 }

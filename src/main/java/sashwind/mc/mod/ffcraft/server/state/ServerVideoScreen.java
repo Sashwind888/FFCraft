@@ -17,7 +17,8 @@ public record ServerVideoScreen(
         ResourceKey<Level> dimension,
         List<ScreenVertex> vertices,
         UvTransform uvTransform,
-        ScreenChannelState channelState
+        ScreenChannelState channelState,
+        boolean uvManuallyEdited
 ) {
     public ServerVideoScreen {
         vertices = new ArrayList<>(vertices);

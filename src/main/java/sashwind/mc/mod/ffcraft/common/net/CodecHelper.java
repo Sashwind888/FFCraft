@@ -125,6 +125,7 @@ public final class CodecHelper {
         }
         writeUvTransform(buf, screen.uvTransform());
         writeChannelState(buf, screen.channelState());
+        buf.writeBoolean(screen.uvManuallyEdited());
     }
 
     public static VideoScreenData readScreenData(RegistryFriendlyByteBuf buf) {
@@ -141,7 +142,8 @@ public final class CodecHelper {
 
         UvTransform uvTransform = readUvTransform(buf);
         ScreenChannelState channelState = readChannelState(buf);
-        return new VideoScreenData(id, playerId, name, dimension, vertices, uvTransform, channelState);
+        boolean uvManuallyEdited = buf.readBoolean();
+        return new VideoScreenData(id, playerId, name, dimension, vertices, uvTransform, channelState, uvManuallyEdited);
     }
 
     public static void writeVideoSource(RegistryFriendlyByteBuf buf, VideoSource source) {

@@ -75,8 +75,10 @@ public class Area extends AbstractScrollArea {
 
     private void recalculateContentHeight() {
         int maxBottom = 0;
+        int areaY = this.getY();
         for (AbstractWidget child : this.children) {
-            int bottom = child.getY() + child.getHeight();
+            // 子控件 Y 是绝对屏幕坐标，减去 Area 的 Y 得到相对于 Area 顶部的内容高度
+            int bottom = child.getY() + child.getHeight() - areaY;
             if (bottom > maxBottom) {
                 maxBottom = bottom;
             }
@@ -194,6 +196,9 @@ public class Area extends AbstractScrollArea {
         // 检查鼠标是否在区域内
         if (!this.isMouseOver(mx, my)) return false;
 
+        // 内容不超出时，不消费滚轮事件（让内部控件自己处理）
+        if (this.totalContentHeight <= this.height) return false;
+
         int newOffset = (int) (this.scrollOffset - scrollDelta * 20);
         this.scrollTo(newOffset);
         return true;
@@ -222,16 +227,18 @@ public class Area extends AbstractScrollArea {
         }
 
         // 转发给子控件（从后往前，后添加的在上层）
+        // 子控件坐标是内容空间，需要加上滚动偏移匹配屏幕鼠标坐标
         for (int i = this.children.size() - 1; i >= 0; i--) {
             AbstractWidget child = this.children.get(i);
-            if (child.visible && child.isActive() && child.isMouseOver(mouseX, mouseY)) {
+            if (child.visible && child.isActive() && child.isMouseOver(mouseX, mouseY + this.scrollOffset)) {
                 if (child.mouseClicked(event, doubleClick)) {
                     return true;
                 }
             }
         }
 
-        return super.mouseClicked(event, doubleClick);
+        // 不消费事件，让外层（MainScreen）处理内容交互
+        return false;
     }
 
     @Override
@@ -243,13 +250,13 @@ public class Area extends AbstractScrollArea {
 
         for (int i = this.children.size() - 1; i >= 0; i--) {
             AbstractWidget child = this.children.get(i);
-            if (child.visible && child.isActive()) {
+            if (child.visible && child.isActive() && child.isMouseOver(event.x(), event.y() + this.scrollOffset)) {
                 if (child.mouseReleased(event)) {
                     return true;
                 }
             }
         }
-        return super.mouseReleased(event);
+        return false;
     }
 
     @Override
@@ -257,8 +264,12 @@ public class Area extends AbstractScrollArea {
         if (this.isDraggingScrollbar) {
             int deltaY = (int) event.y() - this.dragStartY;
             int barHeight = this.height - this.scrollbarMargin * 2;
+            // 滑块本身占高度，实际可拖动距离 = 轨长 - 滑块高
+            float contentRatio = (float) this.height / this.totalContentHeight;
+            int thumbHeight = Math.max(20, (int) (barHeight * contentRatio));
+            int thumbTravel = barHeight - thumbHeight;
             float maxDelta = this.totalContentHeight - this.height;
-            float ratio = (float) deltaY / barHeight;
+            float ratio = thumbTravel > 0 ? Math.max(0f, Math.min(1f, (float) deltaY / thumbTravel)) : 0f;
             int newOffset = this.dragStartOffset + (int) (maxDelta * ratio);
             this.scrollTo(newOffset);
             return true;
@@ -266,13 +277,13 @@ public class Area extends AbstractScrollArea {
 
         for (int i = this.children.size() - 1; i >= 0; i--) {
             AbstractWidget child = this.children.get(i);
-            if (child.visible && child.isActive()) {
+            if (child.visible && child.isActive() && child.isMouseOver(event.x(), event.y() + this.scrollOffset)) {
                 if (child.mouseDragged(event, dx, dy)) {
                     return true;
                 }
             }
         }
-        return super.mouseDragged(event, dx, dy);
+        return false;
     }
 
     // ==================== 键盘事件（转发给子控件） ====================

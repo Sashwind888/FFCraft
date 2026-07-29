@@ -99,6 +99,7 @@ public final class NetworkCodec {
         o.add("vertices", verts);
         o.add("uvTransform", encodeUv(s.uvTransform()));
         o.add("channelState", encodeCh(s.channelState()));
+        o.addProperty("uvManuallyEdited", s.uvManuallyEdited());
         return o;
     }
 
@@ -249,11 +250,12 @@ public final class NetworkCodec {
         return encode("seek", d);
     }
 
-    public static String updateScreenUv(UUID playerId, UUID screenId, UvTransform uv) {
+    public static String updateScreenUv(UUID playerId, UUID screenId, UvTransform uv, boolean uvManuallyEdited) {
         JsonObject d = new JsonObject();
         d.addProperty("playerId", playerId.toString());
         d.addProperty("screenId", screenId.toString());
         d.add("uvTransform", encodeUv(uv));
+        d.addProperty("uvManuallyEdited", uvManuallyEdited);
         return encode("update_screen_uv", d);
     }
 
@@ -374,7 +376,8 @@ public final class NetworkCodec {
         }
         UvTransform uv = parseUv(o.getAsJsonObject("uvTransform"));
         ScreenChannelState ch = parseChannel(o.getAsJsonObject("channelState"));
-        return new VideoScreenData(id, pid, name, dim, verts, uv, ch);
+        boolean uvManuallyEdited = o.has("uvManuallyEdited") && o.get("uvManuallyEdited").getAsBoolean();
+        return new VideoScreenData(id, pid, name, dim, verts, uv, ch, uvManuallyEdited);
     }
 
     public static UvTransform parseUv(JsonObject o) {

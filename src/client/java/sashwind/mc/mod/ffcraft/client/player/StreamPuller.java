@@ -157,17 +157,23 @@ public class StreamPuller extends Thread {
                     NativeImage img = createNativeImage(task.width, task.height, task.raw);
                     if (img != null) {
                         hasVideoFrame = true;
-                        frameQueue.put(img);
+                        try {
+                            frameQueue.put(img);
+                        } catch (InterruptedException e) {
+                            // 被中断时 img 未入队，必须关闭以免 GPU 内存泄露
+                            img.close();
+                            break;
+                        }
                     }
                 } catch (InterruptedException e) {
                     break;
                 }
             }
-            // 清理残留任务
+            // 清理残留任务：直接关闭 NativeImage 而不是放入可能无人消费的 frameQueue
             VideoTask task;
             while ((task = videoQueue.poll()) != null) {
                 NativeImage img = createNativeImage(task.width, task.height, task.raw);
-                if (img != null && !frameQueue.offer(img)) img.close();
+                if (img != null) img.close();
             }
         }
 
@@ -175,12 +181,13 @@ public class StreamPuller extends Thread {
     }
 
     private static NativeImage createNativeImage(int width, int height, byte[] raw) {
+        NativeImage img = null;
         try {
             int border = 2;
             int fw = width + border * 2, fh = height + border * 2;
             int total = fw * fh * 4;
 
-            NativeImage img = new NativeImage(NativeImage.Format.RGBA, fw, fh, false);
+            img = new NativeImage(NativeImage.Format.RGBA, fw, fh, false);
             ByteBuffer dst = MemoryUtil.memByteBuffer(img.getPointer(), total);
             MemoryUtil.memSet(dst, 0);
 
@@ -193,6 +200,8 @@ public class StreamPuller extends Thread {
             return img;
         } catch (Exception e) {
             System.err.println("createNativeImage 错误: " + e.getMessage());
+            // 异常时 img 可能已分配 GPU 内存，必须释放
+            if (img != null) img.close();
             return null;
         }
     }
@@ -205,11 +214,19 @@ public class StreamPuller extends Thread {
             try { grabber.stop(); grabber.release(); }
             catch (Exception e) { e.printStackTrace(); }
         }
+        // 清理 frameQueue 中未被消费的 NativeImage，释放 GPU 内存
+        NativeImage img;
+        while ((img = frameQueue.poll()) != null) {
+            img.close();
+        }
+        // 清理 videoQueue 中未被处理的 VideoTask（raw byte[] 会被 GC，无需特殊处理）
+        videoQueue.clear();
         System.out.println("拉流资源已释放");
     }
 
     public void stopPulling() {
         running = false;
+        if (videoProcessor != null) videoProcessor.shutdown();
         this.interrupt(); // 让阻塞在 grabFrame() 的线程醒来退出
     }
 

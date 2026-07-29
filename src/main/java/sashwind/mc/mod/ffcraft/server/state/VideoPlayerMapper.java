@@ -42,7 +42,8 @@ public final class VideoPlayerMapper {
                 screen.dimension(),
                 new ArrayList<>(screen.vertices()),
                 copyUv(screen.uvTransform()),
-                copyChannel(screen.channelState())
+                copyChannel(screen.channelState()),
+                screen.uvManuallyEdited()
         );
     }
 
@@ -64,7 +65,7 @@ public final class VideoPlayerMapper {
 
     public static ServerVideoScreen createScreen(UUID id, UUID playerId, String name, net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, List<ScreenVertex> vertices) {
         UvTransform uv = calculateInitialUvTransform(vertices);
-        return new ServerVideoScreen(id, playerId, name, dimension, new ArrayList<>(vertices), uv, ScreenChannelState.createDefault());
+        return new ServerVideoScreen(id, playerId, name, dimension, new ArrayList<>(vertices), uv, ScreenChannelState.createDefault(), false);
     }
 
     private static UvTransform calculateInitialUvTransform(List<ScreenVertex> vertices) {

@@ -90,6 +90,8 @@ public class ClientVideoPlaybackManager {
         }
         // 暂停/停止：返回服务器值（不变）
         if (status != PlaybackStatus.PLAYING) return serverProg;
+        // 游戏暂停（ESC 菜单等）：不累计本地时间
+        if (net.minecraft.client.Minecraft.getInstance().isPaused()) return serverProg;
         // 播放中：用本地计时
         Long startMs = playbackStartMs.get(playerId);
         Integer startSecs = playbackStartSecs.get(playerId);
@@ -222,6 +224,10 @@ public class ClientVideoPlaybackManager {
                 OpenAlAudioPlayer ap = audioPlayers.remove(pid);
                 if (ap != null) ap.stop();
                 audioStarted.remove(pid);
+                audioOnlyPlayers.remove(pid);
+                uvRecalculated.remove(pid);
+                audioSampleCount.remove(pid);
+                videoFrameSeq.remove(pid);
                 playbackStartMs.remove(pid);
                 playbackStartSecs.remove(pid);
                 if (pid.equals(lastPlayerId)) lastPlayerId = null;
@@ -476,9 +482,9 @@ public class ClientVideoPlaybackManager {
                 org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
                         org.lwjgl.opengl.GL11C.GL_TEXTURE_MAG_FILTER, org.lwjgl.opengl.GL11C.GL_LINEAR);
 
-                org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush();
+                // 视频帧可能很大（4K），MemoryStack 栈空间不够，用堆外内存
+                java.nio.ByteBuffer directBuf = org.lwjgl.system.MemoryUtil.memAlloc(previewPixels.length);
                 try {
-                    java.nio.ByteBuffer directBuf = stack.malloc(previewPixels.length);
                     directBuf.put(previewPixels);
                     directBuf.flip();
                     org.lwjgl.opengl.GL11C.glTexImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
@@ -486,13 +492,23 @@ public class ClientVideoPlaybackManager {
                             org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
                             directBuf);
                 } finally {
-                    stack.pop();
+                    org.lwjgl.system.MemoryUtil.memFree(directBuf);
                 }
                 System.out.println("[Preview] Upload successful, GLid=" + previewTexId);
             } catch (Exception e) {
                 System.err.println("[Preview] Upload failed: " + e.getMessage());
                 e.printStackTrace();
             }
+        }
+    }
+
+    /** 从选中播放器的视频流抓取一帧到预览纹理 */
+    public static void capturePreviewFrame(UUID playerId) {
+        StreamPuller sp = pullers.get(playerId);
+        if (sp == null) return;
+        NativeImage frame = sp.getFrame();
+        if (frame != null) {
+            try { cachePreviewFrame(frame); } finally { frame.close(); }
         }
     }
 
@@ -507,6 +523,25 @@ public class ClientVideoPlaybackManager {
         audioSampleCount.clear();
         videoFrameSeq.clear();
         uvManuallyEdited.clear();
+        playbackStartMs.clear();
+        playbackStartSecs.clear();
+        // 释放 OpenGL 预览纹理（glDeleteTextures 必须在渲染线程，stopAll 可能在 Netty 线程调用）
+        if (previewTexId != 0) {
+            final int texId = previewTexId;
+            previewTexId = 0;
+            previewTexW = 0;
+            previewTexH = 0;
+            previewTexDirty = false;
+            previewPixels = null;
+            loggedFirstUpload = false;
+            net.minecraft.client.Minecraft.getInstance().execute(() ->
+                org.lwjgl.opengl.GL11C.glDeleteTextures(texId));
+        }
+        // 释放 NativeImage 占位图
+        if (placeholderImage != null) {
+            placeholderImage.close();
+            placeholderImage = null;
+        }
         ClientScreenRenderManager.clearAll();
         lastPlayerId = null;
     }
@@ -546,8 +581,8 @@ public class ClientVideoPlaybackManager {
     private static void recalcUvForVideo(UUID pid, VideoPlayerData player, double videoAspect) {
         System.out.printf("[UV] Recalculating for aspect=%.3f%n", videoAspect);
         for (var sd : player.screens()) {
-            // 玩家手动改过 UV → 跳过自动计算
-            if (uvManuallyEdited.getOrDefault(sd.id(), false)) {
+            // 玩家手动改过 UV → 跳过自动计算（双保险：持久化标志 + 内存标志）
+            if (sd.uvManuallyEdited() || uvManuallyEdited.getOrDefault(sd.id(), false)) {
                 System.out.printf("[UV] Screen '%s': skipped (manually edited)%n", sd.name());
                 continue;
             }
@@ -583,6 +618,7 @@ public class ClientVideoPlaybackManager {
             if (Math.abs(curUv.scaleU() - newScaleU) > 0.005 || Math.abs(curUv.scaleV() - newScaleV) > 0.005) {
                 System.out.printf("[UV] Screen '%s': scaleU %.3f→%.3f scaleV %.3f→%.3f%n",
                         sd.name(), curUv.scaleU(), newScaleU, curUv.scaleV(), newScaleV);
+                // 自动计算，uvManuallyEdited = false（不覆盖手动编辑标志）
                 sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updateScreenUv(
                         pid, sd.id(), newUv);
             }

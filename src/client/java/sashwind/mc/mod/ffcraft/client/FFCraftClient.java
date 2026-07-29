@@ -18,9 +18,9 @@ import net.minecraft.world.InteractionResult;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryUtil;
 import sashwind.mc.mod.ffcraft.FFCraft;
-import sashwind.mc.mod.ffcraft.client.drawlib.TopologyCompat;
-import sashwind.mc.mod.ffcraft.client.drawlib.WorldDraw;
-import sashwind.mc.mod.ffcraft.client.drawlib.lib;
+import sashwind.mc.mod.drawlib.client.TopologyCompat;
+import sashwind.mc.mod.drawlib.client.WorldDraw;
+import sashwind.mc.mod.drawlib.client.lib;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import com.mojang.blaze3d.platform.InputConstants;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
@@ -67,12 +67,7 @@ public class FFCraftClient implements ClientModInitializer {
         VideoPlayerClientNetworking.register();
         sashwind.mc.mod.ffcraft.client.state.ClientScreenRenderLifecycle.register();
 
-        // Configure ImGui font once, before any rendering
-        ClientTickEvents.START_CLIENT_TICK.register(client -> {
-            if (!sashwind.mc.mod.ffcraft.client.screens.MainScreen.isFontConfigured()) {
-                sashwind.mc.mod.ffcraft.client.screens.MainScreen.configureFontOnce(imgui.ImGui.getIO());
-            }
-        });
+        // MainScreen 已改为原版 Minecraft GUI，不再需要 ImGui 字体配置
 
         HudElementRegistry.attachElementBefore(VanillaHudElements.CHAT, Identifier.fromNamespaceAndPath(FFCraft.MOD_ID, "before_chat"), HudRender::extract);
 
@@ -116,6 +111,23 @@ public class FFCraftClient implements ClientModInitializer {
             } catch (Exception e) {
                 e.printStackTrace();
                 throw new RuntimeException(e);
+            }
+        });
+
+        // 客户端停止时清理所有 GPU 资源和事件监听器
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            if (wd != null) { wd.close(); wd = null; }
+            if (wd2 != null) { wd2.close(); wd2 = null; }
+            if (wd3 != null) { wd3.close(); wd3 = null; }
+            Player.clientStop();
+            lib.cleanupStatics();
+            if (pendingBackgroundImage != null) {
+                pendingBackgroundImage.close();
+                pendingBackgroundImage = null;
+            }
+            if (pendingPlaceholderImage != null) {
+                pendingPlaceholderImage.close();
+                pendingPlaceholderImage = null;
             }
         });
 

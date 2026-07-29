@@ -72,6 +72,7 @@ dependencies {
     // imgui 外部mod：开发时可用，不打包
     implementation files('libs/fabric-gui-imgui-26.2-1.1.0+imgui.1.92.0.jar')
     implementation files('libs/imgui-java-binding-1.92.0.jar')
+    implementation files('libs/DrawLib-1.0+26.2.jar')
 
 
     }

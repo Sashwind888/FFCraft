@@ -20,10 +20,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class VideoPlayerService {
     private final MinecraftServer server;
     private final VideoPlayerSavedData savedData;
+    private static final ExecutorService PROBE_EXECUTOR = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "VideoProbe");
+        t.setDaemon(true);
+        return t;
+    });
 
     public VideoPlayerService(MinecraftServer server) {
         this.server = server;
@@ -111,7 +118,7 @@ public class VideoPlayerService {
             if (s.id().equals(screenId)) {
                 ServerVideoScreen renamed = new ServerVideoScreen(
                         s.id(), s.playerId(), sanitizeName(newName, "Screen"),
-                        s.dimension(), s.vertices(), s.uvTransform(), s.channelState()
+                        s.dimension(), s.vertices(), s.uvTransform(), s.channelState(), s.uvManuallyEdited()
                 );
                 player.screens().set(i, renamed);
                 savedData.setDirty();
@@ -249,14 +256,14 @@ public class VideoPlayerService {
         for (int i = 0; i < player.screens().size(); i++) {
             ServerVideoScreen s = player.screens().get(i);
             if (s.id().equals(screenId)) {
-                player.screens().set(i, new ServerVideoScreen(s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), s.uvTransform(), ch));
+                player.screens().set(i, new ServerVideoScreen(s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), s.uvTransform(), ch, s.uvManuallyEdited()));
                 savedData.setDirty();
                 return;
             }
         }
     }
 
-    public void updateScreenUv(ServerPlayer actor, UUID playerId, UUID screenId, UvTransform uv) {
+    public void updateScreenUv(ServerPlayer actor, UUID playerId, UUID screenId, UvTransform uv, boolean uvManuallyEdited) {
         ServerVideoPlayer player = findPlayer(playerId)
                 .orElseThrow(() -> new IllegalArgumentException("播放器不存在"));
         if (!VideoPlayerPermissions.canEdit(actor, player)) {
@@ -265,8 +272,10 @@ public class VideoPlayerService {
         for (int i = 0; i < player.screens().size(); i++) {
             ServerVideoScreen s = player.screens().get(i);
             if (s.id().equals(screenId)) {
+                // 如果客户端声明是手动编辑，保留标志；否则保持原值（防止自动计算覆盖手动标志）
+                boolean edited = uvManuallyEdited || s.uvManuallyEdited();
                 ServerVideoScreen updated = new ServerVideoScreen(
-                        s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), uv, s.channelState());
+                        s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), uv, s.channelState(), edited);
                 player.screens().set(i, updated);
                 savedData.setDirty();
                 return;
@@ -290,7 +299,8 @@ public class VideoPlayerService {
 
     public void probeVideoResolution(UUID playerId, int videoIndex) {
         System.out.println("[Server] probeVideoResolution called for player=" + playerId + " idx=" + videoIndex);
-        new Thread(() -> {
+        PROBE_EXECUTOR.submit(() -> {
+            org.bytedeco.javacv.FFmpegFrameGrabber grabber = null;
             try {
                 var player = findPlayer(playerId).orElse(null);
                 if (player == null || videoIndex < 0 || videoIndex >= player.playlist().size()) {
@@ -299,28 +309,40 @@ public class VideoPlayerService {
                 }
                 String url = player.playlist().get(videoIndex).url();
                 System.out.println("[Server] Probe starting grabber for: " + url);
-                var grabber = new org.bytedeco.javacv.FFmpegFrameGrabber(url);
+                grabber = new org.bytedeco.javacv.FFmpegFrameGrabber(url);
                 grabber.start();
                 int w = grabber.getImageWidth();
                 int h = grabber.getImageHeight();
-                grabber.stop(); grabber.release();
                 if (w > 0 && h > 0) {
                     var oldSrc = player.playlist().get(videoIndex);
                     var newSrc = new sashwind.mc.mod.ffcraft.common.model.VideoSource(
                         oldSrc.url(), oldSrc.targetWidth(), oldSrc.targetHeight(), oldSrc.targetFps(), w, h);
-                    var newList = new ArrayList<>(player.playlist());
-                    newList.set(videoIndex, newSrc);
-                    savedData.players().set(savedData.players().indexOf(player),
-                        new ServerVideoPlayer(player.id(), player.name(), player.isPublic(), player.editors(),
-                            newList, player.playbackState(), player.screens()));
-                    savedData.setDirty();
+                    List<VideoSource> newList;
+                    synchronized (savedData) {
+                        // 重新获取 player 以防在探测期间被修改
+                        var freshPlayer = findPlayer(playerId).orElse(null);
+                        if (freshPlayer == null) return;
+                        newList = new ArrayList<>(freshPlayer.playlist());
+                        newList.set(videoIndex, newSrc);
+                        int idx = savedData.players().indexOf(freshPlayer);
+                        if (idx < 0) return;
+                        savedData.players().set(idx,
+                            new ServerVideoPlayer(freshPlayer.id(), freshPlayer.name(), freshPlayer.isPublic(), freshPlayer.editors(),
+                                newList, freshPlayer.playbackState(), freshPlayer.screens()));
+                        savedData.setDirty();
+                    }
                     VideoPlayerServerNetworking.syncAll();
                     System.out.println("[Server] Probed " + url + " -> " + w + "x" + h);
                 }
             } catch (Exception e) {
                 System.err.println("[Server] Probe failed: " + e.getMessage());
+            } finally {
+                if (grabber != null) {
+                    try { grabber.stop(); } catch (Exception ignored) {}
+                    try { grabber.release(); } catch (Exception ignored) {}
+                }
             }
-        }, "VideoProbe").start();
+        });
     }
 
     public void addVideo(ServerPlayer actor, UUID playerId, VideoSource videoSource) {

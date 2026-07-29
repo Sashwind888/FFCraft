@@ -1,816 +1,952 @@
 package sashwind.mc.mod.ffcraft.client.screens;
 
-import cn.enaium.fabric.imgui.ImGuiRenderable;
-import imgui.ImFontAtlas;
-import imgui.ImFontConfig;
-import imgui.ImGui;
-import imgui.ImGuiIO;
-import imgui.ImVec2;
-import imgui.flag.ImGuiCond;
-import imgui.flag.ImGuiWindowFlags;
-import imgui.type.ImInt;
-import imgui.type.ImString;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.joml.Vector3d;
+import org.lwjgl.glfw.GLFW;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
 import sashwind.mc.mod.ffcraft.client.player.Player;
 import sashwind.mc.mod.ffcraft.client.state.ClientScreenCreationManager;
-import sashwind.mc.mod.ffcraft.common.model.CreatePlayerRequest;
-import sashwind.mc.mod.ffcraft.common.model.PlaybackMode;
-import sashwind.mc.mod.ffcraft.common.model.PlaybackState;
-import sashwind.mc.mod.ffcraft.common.model.PlaybackStatus;
-import sashwind.mc.mod.ffcraft.common.model.ScreenChannelState;
-import sashwind.mc.mod.ffcraft.common.model.UvTransform;
-import sashwind.mc.mod.ffcraft.common.model.VideoPlayerData;
-import sashwind.mc.mod.ffcraft.common.model.VideoScreenData;
+import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlayerCache;
+import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager;
+import sashwind.mc.mod.ffcraft.common.model.*;
+
 import java.util.*;
 
-public class MainScreen extends Screen implements ImGuiRenderable {
-    private static final float FONT_SIZE = 30f;
-    private static final float ITEM_HEIGHT = 32f;
-    private static final float BUTTON_W = 140f;
-    private static final float BUTTON_H = 34f;
-    private static final float LEFT_PANE_W = 320f;
-    private static int localPlayerCounter = 1;
-    private static int selectedPlayerIndex = -1;
-    private static int selectedScreenIndex = -1;
-    private static int selectedVideoIndex = -1;
-    private static List<VideoPlayerData> cachedPlayers = new ArrayList<>();
-    private static long lastSnapshotVersion = Long.MIN_VALUE;
-    private static boolean fontConfigured = false;
+public class MainScreen extends Screen {
 
-    private int renamingPlayerIdx = -1;
-    private java.util.UUID renamingScreenId;
-    private final ImString renameBuf = new ImString(128);
-    private final ImString urlInputBuf = new ImString(2048);
-    private float uvOffsetX, uvOffsetY, uvScaleU = 1f, uvScaleV = 1f, rotationY;
-    private boolean uvFlipU, uvFlipV;
-    private java.util.UUID lastEditedScreenId;
-    private final int[] seekValue = {0};
-    private boolean seekDragging = false;
-    private int lastFps = 30;
-    private float previewZoom = 1f, previewOffsetX = 0f, previewOffsetY = 0f;
-    private String editingMode;
-    private float editStartU, editStartV, editStartScale, editStartScaleV, editStartOffsetX, editStartOffsetY;
-    private float editStartDist;
-    private int editCorner;
-    private boolean editingRotation = false;
-    private final ImString rotationEditBuf = new ImString(16);
+    // ==================== 布局常量 ====================
+    static final int HEADER_H     = 24;
+    static final int TAB_Y        = HEADER_H + 6;
+    static final int TAB_BUTTON_W = 72;
+    static final int TAB_BUTTON_H = 20;
+    static final int ENTRY_H      = 14;
+    static final int SLIDER_H     = 18;
+    static final int SLIDER_LABEL_W = 36;
+    static final int SLIDER_VAL_W   = 44;
+    static final int TRANSPORT_BTN_SIZE = 24;
+
+    static final int BTN_BG = 0xFF3A3A3A, BTN_BORDER = 0xFF666666;
+    static final int BTN_BG_HOV = 0xFF555555, BTN_TEXT = 0xFFE0E0E0, BTN_TEXT_HOV = 0xFFFFFF00;
+
+    // ==================== 右侧面板 ====================
+    private int rightPaneX, rightPaneY, rightPaneW;
+
+    // ==================== 数据状态 ====================
+    private static int localPlayerCounter = 1;
+    private static int selectedVideoIndex = -1;
+    static List<VideoPlayerData> cachedPlayers = new ArrayList<>();
+    private static long lastSnapshotVersion = Long.MIN_VALUE;
+    private int activeTab = 0;
+
+    // ==================== 子组件 ====================
+    private final LeftPanelHelper leftPanel = new LeftPanelHelper();
+    private final SeekBarHelper seekBar = new SeekBarHelper();
+    private final UVEditorHelper uvEditor = new UVEditorHelper();
+
+    // ==================== Widget ====================
+    private EditBox urlInput, renameInput, valueEditBox;
+    /** Area 承载右侧面板，处理 scissor / 滚动偏移 / 滚动条 */
+    private Area rightPaneArea;
+
+    // ==================== 播放控制页签 —— 存储坐标 ====================
+    private int transportBtnY, transportPrevX, transportPlayX, transportStopX, transportNextX;
+    private int volSliderX, volSliderY, volSliderW;
+    private int qualityBtnX, qualityBtnY, qualityBtnW;
+    private int modeBtnX, modeBtnY, modeBtnW;
+
+    // ==================== 播放列表页签 ====================
+    private int playlistScroll, playlistX, playlistY, playlistW, playlistH;
+
+    // ==================== 屏幕设置页签 ====================
+    private int scrSliderBaseY, scrSliderX, scrSliderW;
+    private int scrFlipBtnY, scrChanBtnY, scrSaveBtnY;
+
+    // ==================== 拖拽/编辑状态 ====================
+    private String sliderDragging;
+    private String sliderEditMode;
+    private boolean panningUV;
+    private int dragLockedScroll; // UV 拖动时锁定的滚动偏移，防止抽搐
+
+    // ==================== 内部 Widget：放在 Area 里渲染 ====================
+    private class TabContentWidget extends net.minecraft.client.gui.components.AbstractWidget {
+        final int tabIdx;
+        TabContentWidget(int tabIdx, int x, int y, int w, int h) {
+            super(x, y, w, h, Component.empty());
+            this.tabIdx = tabIdx;
+        }
+        @Override
+        protected void extractWidgetRenderState(GuiGraphicsExtractor g, int mx, int my, float d) {
+            if (!hasSelectedPlayer()) return;
+            VideoPlayerData p = getSelectedPlayer();
+            int px = this.getX(), py = this.getY(), pw = this.width;
+            switch (tabIdx) {
+                case 0 -> renderPlaybackTab(g, mx, my, p, px, py, pw);
+                case 1 -> renderPlaylistTab(g, mx, my, p, px, py, pw);
+                case 2 -> renderScreenTab(g, mx, my, p, px, py, pw);
+            }
+        }
+        @Override
+        protected void updateWidgetNarration(net.minecraft.client.gui.narration.NarrationElementOutput o) {}
+        // 鼠标事件由 MainScreen 统一处理，不在此消费
+        @Override public boolean mouseClicked(MouseButtonEvent e, boolean d) { return false; }
+        @Override public boolean mouseReleased(MouseButtonEvent e) { return false; }
+        @Override public boolean mouseDragged(MouseButtonEvent e, double dx, double dy) { return false; }
+        @Override public boolean mouseScrolled(double mx, double my, double sx, double sy) { return false; }
+    }
+
+    // ==================== 访问器 ====================
+    static boolean hasSelectedPlayer() {
+        int i = LeftPanelHelper.selectedPlayerIndex;
+        return i >= 0 && i < cachedPlayers.size();
+    }
+    static VideoPlayerData getSelectedPlayer() { return cachedPlayers.get(LeftPanelHelper.selectedPlayerIndex); }
+    static boolean hasSelectedScreen() {
+        if (!hasSelectedPlayer()) return false;
+        int i = LeftPanelHelper.selectedScreenIndex;
+        return i >= 0 && i < getSelectedPlayer().screens().size();
+    }
+    static VideoScreenData getSelectedScreen() {
+        return getSelectedPlayer().screens().get(LeftPanelHelper.selectedScreenIndex);
+    }
 
     public MainScreen() { super(Component.translatable("key.screens.mainscreen.title")); }
 
-    @Override public void render(ImGuiIO io) {
+    /** 将屏幕 Y 坐标转为内容空间 Y（加 Area 滚动偏移） */
+    private int scrollAdjY(int screenY) {
+        return rightPaneArea != null ? screenY + rightPaneArea.getScrollOffset() : screenY;
+    }
+
+    // ==================== 生命周期 ====================
+    @Override
+    protected void init() {
         syncCache();
-        sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.uploadPreviewTexture();
-        ImVec2 ds = io.getDisplaySize();
-        float w = Math.min(ds.x * 0.8f, 1100f), h = Math.min(ds.y * 0.85f, 750f);
-        ImGui.setNextWindowSize(w, h, ImGuiCond.FirstUseEver);
-        ImGui.setNextWindowPos((ds.x - w) * 0.5f, (ds.y - h) * 0.5f, ImGuiCond.FirstUseEver);
-        if (ImGui.begin("FFCraft · 播放器管理", ImGuiWindowFlags.NoSavedSettings)) renderLayout();
-        ImGui.end();
-    }
+        recalcLayout();
 
-    public static boolean isFontConfigured() { return fontConfigured; }
-    public static void configureFontOnce(ImGuiIO io) {
-        if (fontConfigured) return;
-        fontConfigured = true;
-        ImFontAtlas fonts = io.getFonts();
-        fonts.clearFonts();
-        ImFontConfig cfg = new ImFontConfig(); cfg.setSizePixels(FONT_SIZE);
-        if (!tryLoadBuiltinFont(fonts, cfg)) { fonts.addFontDefault(); io.setFontGlobalScale(2.0f); }
-        fonts.build(); cfg.destroy();
-    }
-    private static boolean tryLoadBuiltinFont(ImFontAtlas fonts, ImFontConfig cfg) {
-        try {
-            var in = MainScreen.class.getClassLoader().getResourceAsStream("assets/ffcraft/font/cjk.ttf");
-            if (in == null) return false;
-            byte[] d = in.readAllBytes(); in.close();
-            fonts.addFontFromMemoryTTF(d, FONT_SIZE, cfg, fonts.getGlyphRangesChineseFull());
-            return true;
-        } catch (Exception e) { return false; }
-    }
+        int rp = rightPaneX, cw = rightPaneW;
 
-    private void renderLayout() {
-        float ah = ImGui.getContentRegionAvailY(), lw = LEFT_PANE_W, rw = ImGui.getContentRegionAvailX() - lw - 8f;
-        if (ImGui.beginChild("##left", lw, ah, true, ImGuiWindowFlags.NoScrollWithMouse)) { renderLeftPane(); } ImGui.endChild();
-        ImGui.sameLine(0, 8f);
-        if (ImGui.beginChild("##right", rw, ah, true, ImGuiWindowFlags.NoScrollWithMouse)) {
-            if (cachedPlayers.isEmpty()) ImGui.textColored(0.5f, 0.5f, 0.5f, 1f, "暂无播放器");
-            else if (selectedPlayerIndex < 0 || selectedPlayerIndex >= cachedPlayers.size()) {
-                selectedPlayerIndex = 0; ImGui.textColored(0.6f, 0.6f, 0.6f, 1f, "请在左侧选择播放器");
-            } else renderRightPane(cachedPlayers.get(selectedPlayerIndex));
-        } ImGui.endChild();
-    }
+        // Tab 按钮
+        addRenderableWidget(btn("播放控制", b -> { activeTab = 0; rebuildTabContent(); }, rp, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
+        addRenderableWidget(btn("播放列表", b -> { activeTab = 1; rebuildTabContent(); }, rp + TAB_BUTTON_W + 2, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
+        addRenderableWidget(btn("屏幕设置", b -> { activeTab = 2; rebuildTabContent(); }, rp + TAB_BUTTON_W * 2 + 4, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
 
-    private void renderLeftPane() {
-        boolean hs = selectedPlayerIndex >= 0 && selectedPlayerIndex < cachedPlayers.size();
-        ImGui.separator(); ImGui.spacing(); ImGui.textColored(0.7f, 0.7f, 0.7f, 1f, "播放器列表"); ImGui.spacing();
-        float lh = ImGui.getContentRegionAvailY() - 220f;
-        if (ImGui.beginChild("##ps", 0, lh)) {
-            for (int i = 0; i < cachedPlayers.size(); i++) {
-                VideoPlayerData p = cachedPlayers.get(i);
-                if (renamingPlayerIdx == i) {
-                    ImGui.setNextItemWidth(ImGui.getContentRegionAvailX() - 8f);
-                    ImGui.inputText("##rp" + p.id(), renameBuf); ImGui.setItemDefaultFocus();
-                    if (ImGui.isItemDeactivatedAfterEdit() || ImGui.isKeyPressed(imgui.flag.ImGuiKey.Enter)) {
-                        String nm = renameBuf.toString().trim();
-                        if (!nm.isEmpty()) VideoPlayerClientNetworking.renamePlayer(p.id(), nm);
-                        renamingPlayerIdx = -1;
-                    }
-                    if (ImGui.isKeyPressed(imgui.flag.ImGuiKey.Escape)) renamingPlayerIdx = -1;
-                } else {
-                    if (ImGui.selectable(p.name() + "##p" + p.id(), i == selectedPlayerIndex, 0, new ImVec2(0, ITEM_HEIGHT))) {
-                        selectedPlayerIndex = i; selectedScreenIndex = -1;
-                    }
-                    if (ImGui.isItemHovered() && ImGui.isMouseDoubleClicked(0)) {
-                        selectedPlayerIndex = i; renameBuf.set(p.name()); renamingPlayerIdx = i; renamingScreenId = null;
-                    }
-                }
-            }
-        } ImGui.endChild();
-        ImGui.spacing(); ImGui.separator(); ImGui.spacing();
-        ImGui.textColored(0.7f, 0.7f, 0.7f, 1f, "屏幕列表"); ImGui.spacing();
-        if (hs) {
-            VideoPlayerData p = cachedPlayers.get(selectedPlayerIndex);
-            if (ImGui.beginChild("##ss", 0, 120f)) {
-                for (int i = 0; i < p.screens().size(); i++) {
-                    VideoScreenData sc = p.screens().get(i);
-                    if (renamingScreenId != null && renamingScreenId.equals(sc.id())) {
-                        ImGui.setNextItemWidth(ImGui.getContentRegionAvailX() - 8f);
-                        ImGui.inputText("##rs" + sc.id(), renameBuf); ImGui.setItemDefaultFocus();
-                        if (ImGui.isItemDeactivatedAfterEdit() || ImGui.isKeyPressed(imgui.flag.ImGuiKey.Enter)) {
-                            String nm = renameBuf.toString().trim();
-                            if (!nm.isEmpty()) VideoPlayerClientNetworking.renameScreen(p.id(), sc.id(), nm);
-                            renamingScreenId = null;
-                        }
-                        if (ImGui.isKeyPressed(imgui.flag.ImGuiKey.Escape)) renamingScreenId = null;
-                    } else {
-                        if (ImGui.selectable(sc.name() + "##sc" + i, i == selectedScreenIndex, 0, new ImVec2(0, ITEM_HEIGHT)))
-                            selectedScreenIndex = i;
-                        if (ImGui.isItemHovered() && ImGui.isMouseDoubleClicked(0)) {
-                            selectedScreenIndex = i; renameBuf.set(sc.name()); renamingScreenId = sc.id(); renamingPlayerIdx = -1;
-                        }
-                    }
-                }
-            } ImGui.endChild();
-        }
-        ImGui.spacing(); ImGui.separator(); ImGui.spacing();
-        if (ImGui.button("+ 新建播放器", BUTTON_W, BUTTON_H)) {
+        // URL 输入（放在添加按钮左边）
+        int urlBY = this.height - 28;
+        urlInput = new EditBox(this.font, rp, urlBY, cw - 160, 20, Component.literal("视频URL..."));
+        urlInput.setMaxLength(2048);
+        addRenderableWidget(urlInput);
+
+        renameInput = new EditBox(this.font, 0, 0, 100, 16, Component.literal("重命名"));
+        renameInput.setMaxLength(64); renameInput.visible = false;
+        addRenderableWidget(renameInput);
+
+        valueEditBox = new EditBox(this.font, 0, 0, 80, 16, Component.literal("数值"));
+        valueEditBox.setMaxLength(10); valueEditBox.visible = false;
+        addRenderableWidget(valueEditBox);
+
+        // 左侧面板按钮
+        int lbY = this.height - 55;
+        addRenderableWidget(btn("+ 新建播放器", b -> {
             VideoPlayerClientNetworking.createPlayer(new CreatePlayerRequest("Player" + localPlayerCounter++, false));
-        }
-        if (hs) { ImGui.sameLine();
-            if (ImGui.button("× 删除播放器", BUTTON_W, BUTTON_H)) {
-                VideoPlayerClientNetworking.deletePlayer(cachedPlayers.get(selectedPlayerIndex).id());
-                selectedPlayerIndex = -1; selectedScreenIndex = -1;
+        }, LeftPanelHelper.PANE_X, lbY, LeftPanelHelper.PANE_W, 20));
+        addRenderableWidget(btn("× 删除播放器", b -> {
+            if (hasSelectedPlayer()) {
+                VideoPlayerClientNetworking.deletePlayer(getSelectedPlayer().id());
+                LeftPanelHelper.selectedPlayerIndex = -1; LeftPanelHelper.selectedScreenIndex = -1;
             }
-        }
+        }, LeftPanelHelper.PANE_X, lbY + 22, LeftPanelHelper.PANE_W, 20));
+
+        // 播放列表操作按钮
+        addRenderableWidget(btn("+ 添加", b -> addVideo(), rp + cw - 152, urlBY, 72, 20));
+        addRenderableWidget(btn("× 删除", b -> deleteSelectedVideo(), rp + cw - 76, urlBY, 72, 20));
+
+        // 屏幕操作按钮 → 改为在 renderScreenTab 中手动绘制，随内容滚动
+
+        // === 右侧滚动区域（Area 管理 scissor / 滚动 / 滚动条） ===
+        int availH = this.height - rightPaneY - 10;
+        rightPaneArea = new Area(rightPaneX, rightPaneY, rightPaneW, availH);
+        rebuildTabContent();
     }
 
-    private void renderRightPane(VideoPlayerData player) {
-        if (ImGui.beginTabBar("##tabs")) {
-            if (ImGui.beginTabItem("播放控制")) { renderPlaybackTab(player); ImGui.endTabItem(); }
-            if (ImGui.beginTabItem("播放列表")) { renderPlaylistTab(player); ImGui.endTabItem(); }
-            if (ImGui.beginTabItem("屏幕设置")) { renderScreenTab(player); ImGui.endTabItem(); }
-            ImGui.endTabBar();
-        }
+    private int tickCounter;
+    @Override
+    public void tick() {
+        super.tick();
+        if (++tickCounter % 4 == 0 && hasSelectedPlayer())
+            ClientVideoPlaybackManager.capturePreviewFrame(getSelectedPlayer().id());
+        ClientVideoPlaybackManager.uploadPreviewTexture();
+    }
+    @Override public void onClose() { cachedPlayers.clear(); lastSnapshotVersion = Long.MIN_VALUE; super.onClose(); }
+    @Override public void removed() { super.removed(); }
+
+    // ==================== 布局 ====================
+    private void recalcLayout() {
+        rightPaneX = LeftPanelHelper.PANE_X + LeftPanelHelper.PANE_W + 8;
+        rightPaneY = TAB_Y + TAB_BUTTON_H + 8;
+        rightPaneW = Math.max(200, this.width - rightPaneX - 12);
     }
 
-    private void renderPlaybackTab(VideoPlayerData player) {
+    /** 当前标签页的内容总高度 */
+    private int calcTabContentH() {
+        int availH = this.height - rightPaneY - 10;
+        int innerW = rightPaneW - 12; // 留滚动条宽度
+        if (activeTab == 0) return Math.max(availH, calcPlaybackTabH(innerW));
+        if (activeTab == 1) return availH; // 列表用内部滚动，不让 Area 滚
+        if (activeTab == 2 && hasSelectedPlayer()) return Math.max(availH, calcScreenTabH(getSelectedPlayer(), innerW));
+        return availH;
+    }
+
+    private int calcPlaybackTabH(int pw) {
+        return pw * 9 / 16 + 8 + SeekBarHelper.BAR_H + 6 + ENTRY_H + 6 + TRANSPORT_BTN_SIZE + 8 + SLIDER_H + 6 + 24 + 16;
+    }
+
+    private int calcScreenTabH(VideoPlayerData p, int pw) {
+        int uvH = Math.min(pw * 9 / 16, 120);
+        int h = 4 + ENTRY_H * 2 + 4 + uvH + 8 + (SLIDER_H + 4) * 4 + 8 + 20 + 20 + 8 + 22;
+        if (p.screens().size() > 1) h += ENTRY_H + 6;
+        return h;
+    }
+
+    private void rebuildTabContent() {
+        if (rightPaneArea == null) return;
+        rightPaneArea.clearChildren();
+        int innerW = rightPaneW - 12;
+        int ch = calcTabContentH();
+        rightPaneArea.addChild(new TabContentWidget(activeTab, rightPaneX, rightPaneY, innerW, ch));
+    }
+
+    // ==================== 主渲染 ====================
+    @Override
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+        syncCache();
+        graphics.fill(0, 0, this.width, this.height, 0xC0101010);
+
+        // 标题栏
+        graphics.fill(0, 0, this.width, HEADER_H, 0xDD1A1A2E);
+        graphics.fill(0, HEADER_H - 1, this.width, HEADER_H, 0xFF444466);
+        String hdr = "FFCraft 控制面板";
+        graphics.text(this.font, hdr, (this.width - this.font.width(hdr)) / 2, 5, 0xFFFFFFFF);
+        int closeX = this.width - 20, closeY = 4;
+        boolean hov = mouseX >= closeX && mouseX <= closeX + 16 && mouseY >= closeY && mouseY <= closeY + 16;
+        graphics.fill(closeX, closeY, closeX + 16, closeY + 16, hov ? 0xFFFF4444 : 0x66FFFFFF);
+        graphics.text(this.font, "×", closeX + 5, closeY + 2, 0xFFFFFFFF);
+
+        // 左侧面板
+        leftPanel.render(graphics, this.font, mouseX, mouseY, cachedPlayers, this.height);
+        syncRenameInput();
+
+        // === 右侧面板：Area 负责 scissor + 滚动 + 滚动条，TabContentWidget 负责内容 ===
+        if (hasSelectedPlayer() && rightPaneArea != null) {
+            rightPaneArea.extractWidgetRenderState(graphics, mouseX, mouseY, delta);
+        }
+
+        // 空状态提示
+        if (cachedPlayers.isEmpty()) {
+            graphics.text(this.font, "暂无播放器，请先创建", rightPaneX + 4, rightPaneY + 4, 0xFF888888);
+        }
+
+        updateWidgetVisibility();
+        super.extractRenderState(graphics, mouseX, mouseY, delta);
+    }
+
+    // ==================== 播放控制页签 ====================
+    private void renderPlaybackTab(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                    VideoPlayerData player, int px, int py, int pw) {
         PlaybackState pb = player.playbackState();
-        int tot = player.playlist().size(), ci = pb.currentIndex();
-        float availW = ImGui.getContentRegionAvailX();
+        int curY = py;
 
-        // ==== VIDEO PREVIEW (16:9) ====
-        sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.uploadPreviewTexture();
-        float prevH = availW * 9f / 16f;
-        if (ImGui.beginChild("##videoPrev", availW, prevH, true, ImGuiWindowFlags.NoScrollWithMouse)) {
-            float pw = ImGui.getContentRegionAvailX(), ph = ImGui.getContentRegionAvailY();
-            ImVec2 c = ImGui.getCursorScreenPos();
+        // 视频预览
+        int prevH = pw * 9 / 16;
+        int texId = ClientVideoPlaybackManager.getPreviewTextureId();
+        graphics.fill(px, curY, px + pw, curY + prevH, texId != 0 ? 0xFF1A2A1A : 0xFF0A0A0A);
+        if (texId == 0) drawGrid(graphics, px, curY, pw, prevH, 24);
+        String pl = texId != 0 ? "▶ 视频预览" : "等待视频...";
+        graphics.text(this.font, pl, (int)(px + (pw - this.font.width(pl)) / 2f),
+                (int)(curY + prevH / 2f - 6), texId != 0 ? 0xFF55FF55 : 0xFF666666);
+        drawRect(graphics, px, curY, pw, prevH, 0xFF555555);
+        curY += prevH + 8;
 
-            int texId = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getPreviewTextureId();
-            if (texId != 0) {
-                // System.out.println("[Preview GUI] Drawing image with texId=" + texId + ", size=" + pw + "x" + ph);
-                ImGui.image(texId, pw, ph, 0, 1, 1, 0);
-            } else {
+        // 进度条
+        seekBar.setIsLive(ClientVideoPlaybackManager.isLive(player.id()));
+        seekBar.syncToDuration(ClientVideoPlaybackManager.getDuration(player.id()),
+                ClientVideoPlaybackManager.getLocalProgressSeconds(player.id()));
+        curY += seekBar.render(graphics, this.font, mouseX, mouseY, player, px, curY, pw) + 6;
 
-                ImGui.getWindowDrawList().addRectFilled(c.x, c.y, c.x + pw, c.y + ph, 0xFF0A0A0A);
-                float cell = 24f;
-                for (float gx = c.x; gx < c.x + pw; gx += cell)
-                    ImGui.getWindowDrawList().addLine(gx, c.y, gx, c.y + ph, 0x18FFFFFF, 0.5f);
-                for (float gy = c.y; gy < c.y + ph; gy += cell)
-                    ImGui.getWindowDrawList().addLine(c.x, gy, c.x + pw, gy, 0x18FFFFFF, 0.5f);
-            }
-        }
-        ImGui.endChild();
-        ImGui.spacing();
+        // 状态文本
+        String status = switch (pb.status()) {
+            case PLAYING -> "▶ 播放中"; case PAUSED -> "⏸ 已暂停"; case STOPPED -> "■ 已停止";
+        };
+        graphics.text(this.font, status, px + 2, curY, 0xFFAAAAAA);
+        curY += ENTRY_H + 6;
 
-        // ==== PROGRESS BAR ====
-        int secs = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getLocalProgressSeconds(player.id());
-        boolean isLive = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.isLive(player.id());
-        double dur = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getDuration(player.id());
-        int maxSecs = Math.max((int) dur, secs + 1);
+        // 播放控制按钮
+        transportBtnY = curY;
+        int bc = px + pw / 2;
+        transportPrevX = bc - 62; transportPlayX = bc - 29;
+        transportStopX = bc + 4;  transportNextX = bc + 37;
 
-        // sync from server; reset on stop
-        if (pb.status() == PlaybackStatus.STOPPED) { seekValue[0] = 0; seekDragging = false; }
-        else if (!seekDragging) seekValue[0] = secs;
+        drawUniBtn(graphics, transportPrevX, curY, TRANSPORT_BTN_SIZE, TRANSPORT_BTN_SIZE, "⏮", mouseX, mouseY);
+        String pLabel = pb.status() == PlaybackStatus.PLAYING ? "⏸" : "▶";
+        drawUniBtn(graphics, transportPlayX, curY, TRANSPORT_BTN_SIZE, TRANSPORT_BTN_SIZE, pLabel, mouseX, mouseY);
+        drawUniBtn(graphics, transportStopX, curY, TRANSPORT_BTN_SIZE, TRANSPORT_BTN_SIZE, "■", mouseX, mouseY);
+        drawUniBtn(graphics, transportNextX, curY, TRANSPORT_BTN_SIZE, TRANSPORT_BTN_SIZE, "⏭", mouseX, mouseY);
+        curY += TRANSPORT_BTN_SIZE + 8;
 
-        String ts = String.format("%d:%02d", seekValue[0] / 60, seekValue[0] % 60);
-        ImGui.setNextItemWidth(availW);
-        if (isLive) ImGui.beginDisabled();
-        boolean changed = ImGui.sliderInt("##seek", seekValue, 0, maxSecs, ts + " | " + (pb.currentIndex() + 1) + "/" + Math.max(tot, 1));
-        boolean active = ImGui.isItemActive();
-        if (changed && !seekDragging) seekDragging = true;
-        if (!active && seekDragging) {
-            // user released: send seek
-            VideoPlayerClientNetworking.seekPlayback(player.id(), seekValue[0]);
-            sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.seekStream(player.id(), seekValue[0]);
-            seekDragging = false;
-        }
-        if (isLive) ImGui.endDisabled();
-        ImGui.spacing();
+        // 音量滑块
+        volSliderY = curY;
+        volSliderX = px + 4;
+        volSliderW = pw - SLIDER_VAL_W - 8;
+        renderSlider(graphics, px + 4, curY, volSliderW, SLIDER_H, pb.volume() / 300f,
+                String.format("%d%%", pb.volume()), inRect(mouseX, mouseY, px + 4, curY, volSliderW, SLIDER_H));
+        curY += SLIDER_H + 6;
 
-        // ==== PLAYBACK CONTROLS (centered) ====
-        float bw = 52f, totalCtrlW = bw * 4 + 12f;
-        ImGui.setCursorPosX((availW - totalCtrlW) / 2);
-        if (ImGui.button("⏮", bw, 0)) {
-            int prevIdx = ci > 0 ? ci - 1 : Math.max(0, tot - 1);
-            VideoPlayerClientNetworking.updatePlayback(player.id(), PlaybackStatus.PLAYING, pb.mode(), prevIdx, pb.volume());
-        }
-        ImGui.sameLine(0, 4f);
-        if (ImGui.button(pb.status() == PlaybackStatus.PLAYING ? "⏸" : "▶", bw, 0)) {
-            var ns = pb.status() == PlaybackStatus.PLAYING ? PlaybackStatus.PAUSED : PlaybackStatus.PLAYING;
-            VideoPlayerClientNetworking.updatePlayback(player.id(), ns, pb.mode(), ci, pb.volume());
-            if (ns == PlaybackStatus.PLAYING) {
-                // 恢复：seek 到暂停前的进度
-                VideoPlayerClientNetworking.seekPlayback(player.id(), seekValue[0]);
-            } else {
-                // 暂停：seek 到当前位置保存进度
-                VideoPlayerClientNetworking.seekPlayback(player.id(), seekValue[0]);
-                sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.stopLocal(player.id());
-            }
-        }
-        ImGui.sameLine(0, 4f);
-        if (ImGui.button("■", bw, 0)) {
-            VideoPlayerClientNetworking.updatePlayback(player.id(), PlaybackStatus.STOPPED, pb.mode(), ci, pb.volume());
-            sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.stopLocal(player.id());
-            seekValue[0] = 0; seekDragging = false;
-        }
-        ImGui.sameLine(0, 4f);
-        if (ImGui.button("⏭", bw, 0)) {
-            int nextIdx = ci < tot - 1 ? ci + 1 : 0;
-            VideoPlayerClientNetworking.updatePlayback(player.id(), PlaybackStatus.PLAYING, pb.mode(), nextIdx, pb.volume());
-        }
-        ImGui.spacing();
+        // === 画质 + 模式（右对齐，与进度条同宽） ===
+        int[] res = getVideoRes();
+        String[] qOpts = ClientVideoPlaybackManager.getQualityOptions(Math.max(res[0], res[1]));
+        int curQ = ClientVideoPlaybackManager.getQualityIndex();
+        int curQi = 0;
+        for (int i = 0; i < qOpts.length; i++)
+            if (qOpts[i].equals(ClientVideoPlaybackManager.QUALITY_LABELS[curQ])) { curQi = i; break; }
 
-        // ==== SETTINGS ROW ====
-        int[] vol = {pb.volume()}; ImGui.text("音量"); ImGui.sameLine(); ImGui.setNextItemWidth(70f);
-        if (ImGui.sliderInt("##vol", vol, 0, 300, "%d%%", 0)) {
-            VideoPlayerClientNetworking.updatePlayback(player.id(), pb.status(), pb.mode(), ci, vol[0]);
-            sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.setGlobalVolume(vol[0] / 100f);
-        }
-        ImGui.sameLine(); ImGui.text(" 画质"); ImGui.sameLine(); ImGui.setNextItemWidth(80f);
-        // 根据当前视频分辨率过滤可选项（超过视频分辨率的选项隐藏）
-        int videoW = 1280, videoH = 720;
-        if (ci >= 0 && ci < player.playlist().size()) {
-            var src = player.playlist().get(ci);
-            if (src.originalWidth() > 0) { videoW = src.originalWidth(); videoH = src.originalHeight(); }
-        }
-        int videoMaxDim = Math.max(videoW, videoH);
-        String[] qOpts = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getQualityOptions(videoMaxDim);
-        int curQ = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getQualityIndex();
-        // 找到当前值在过滤后列表中的索引
-        int curQIdx = 0;
-        for (int i = 0; i < qOpts.length; i++) {
-            if (qOpts[i].equals(sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.QUALITY_LABELS[curQ])) {
-                curQIdx = i; break;
-            }
-        }
-        ImInt qi = new ImInt(curQIdx);
-        if (ImGui.combo("##quality", qi, qOpts)) {
-            // 从过滤后的标签映射回原始索引
-            String selLabel = qOpts[qi.get()];
-            for (int i = 0; i < sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.QUALITY_LABELS.length; i++) {
-                if (sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.QUALITY_LABELS[i].equals(selLabel)) {
-                    sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.setQualityByIndex(i);
-                    break;
-                }
-            }
-        }
-        // 模式
-        ImGui.sameLine(); ImGui.text(" 模式"); ImGui.sameLine(); ImGui.setNextItemWidth(80f);
-        ImInt mi = new ImInt(pb.mode().ordinal());
-        if (ImGui.combo("##mode", mi, new String[]{"顺序","循环","单曲"})) {
-            VideoPlayerClientNetworking.updatePlayback(player.id(), pb.status(), PlaybackMode.values()[mi.get()], ci, pb.volume());
+        modeBtnW = 80; qualityBtnW = 64;
+        int rowW = modeBtnW + 8 + qualityBtnW + (qOpts.length > 1 ? 36 : 0);
+        int rowX = px + pw - rowW - 4;
+
+        qualityBtnY = curY; qualityBtnX = rowX + modeBtnW + 8 + (qOpts.length > 1 ? 18 : 0);
+        modeBtnY = curY;    modeBtnX = rowX;
+
+        String modeLabel = switch (pb.mode()) {
+            case SEQUENTIAL -> "顺序"; case LOOP_LIST -> "列表循环";
+            case SINGLE_LOOP -> "单曲"; case RANDOM -> "随机";
+        };
+        drawUniBtn(graphics, modeBtnX, modeBtnY, modeBtnW, 20, modeLabel, mouseX, mouseY);
+
+        String qLabel = qOpts.length > curQi ? qOpts[curQi] : "原画";
+        drawUniBtn(graphics, qualityBtnX, qualityBtnY, qualityBtnW, 20, qLabel, mouseX, mouseY);
+        if (qOpts.length > 1) {
+            drawUniBtn(graphics, qualityBtnX - 18, qualityBtnY, 18, 20, "◀", mouseX, mouseY);
+            drawUniBtn(graphics, qualityBtnX + qualityBtnW, qualityBtnY, 18, 20, "▶", mouseX, mouseY);
         }
     }
 
-    private void renderPlaylistTab(VideoPlayerData player) {
+    // ==================== 播放列表页签 ====================
+    private void renderPlaylistTab(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                    VideoPlayerData player, int px, int py, int pw) {
         PlaybackState pb = player.playbackState();
-        int tot = player.playlist().size(), ci = pb.currentIndex();
-        ImGui.textColored(0.6f, 0.6f, 0.6f, 1f, "播放列表 (" + tot + " 首)"); ImGui.spacing();
-        float lh = ImGui.getContentRegionAvailY() - 100f;
-        if (tot == 0) ImGui.textColored(0.4f, 0.4f, 0.4f, 1f, "（播放列表为空）");
-        else if (ImGui.beginChild("##pl", 0, lh, true)) {
-            for (int i = 0; i < tot; i++) {
-                String url = player.playlist().get(i).url();
-                String label = (i == ci ? "▶ " : "   ") + (url.length() > 40 ? url.substring(0, 40) + "..." : url) + "##v" + i;
-                if (ImGui.selectable(label, i == selectedVideoIndex, 0, new ImVec2(0, ITEM_HEIGHT))) selectedVideoIndex = i;
-                if (ImGui.isItemHovered() && ImGui.isMouseDoubleClicked(0))
-                    VideoPlayerClientNetworking.updatePlayback(player.id(), PlaybackStatus.PLAYING, pb.mode(), i, pb.volume());
+        List<VideoSource> playlist = player.playlist();
+        int ci = pb.currentIndex();
+        int curY = py + 4; // 顶部留白
+
+        String curInfo = playlist.isEmpty() ? "无视频" : String.format("当前: %d/%d  |  %s",
+                ci + 1, playlist.size(), ci >= 0 && ci < playlist.size() ? shorten(playlist.get(ci).url(), 40) : "-");
+        graphics.text(this.font, curInfo, px + 2, curY, 0xFFAAAAAA);
+        curY += ENTRY_H + 4;
+
+        int availH = this.height - rightPaneY - 10;
+        int listH = availH - (ENTRY_H + 4) - 4 - 56; // 顶部留白 + 底部按钮区
+        playlistX = px; playlistY = curY; playlistW = pw; playlistH = listH;
+        graphics.fill(px, curY, px + pw, curY + listH, 0xAA111111);
+        graphics.fill(px, curY, px + pw, curY + 1, 0xFF555555);
+        if (playlist.isEmpty()) {
+            graphics.text(this.font, "（播放列表为空）", px + 4, curY + 4, 0xFF888888);
+        } else {
+            int vis = listH / (ENTRY_H + 2);
+            int maxScroll = Math.max(0, playlist.size() - vis);
+            if (playlistScroll > maxScroll) playlistScroll = maxScroll;
+            for (int i = playlistScroll; i < Math.min(playlist.size(), playlistScroll + vis); i++) {
+                String url = playlist.get(i).url();
+                int ey = curY + 2 + (i - playlistScroll) * (ENTRY_H + 2);
+                boolean sel = (i == selectedVideoIndex), cur = (i == ci);
+                boolean hov = mouseX >= px && mouseX <= px + pw && mouseY >= ey && mouseY <= ey + ENTRY_H;
+                if (sel) graphics.fill(px, ey, px + pw, ey + ENTRY_H, 0xFF444444);
+                else if (hov) graphics.fill(px, ey, px + pw, ey + ENTRY_H, 0x55333333);
+                graphics.text(this.font, (cur ? "▶ " : "   ") + shorten(url, pw / 7 - 3),
+                        px + 3, ey + 1, cur ? 0xFF55FF55 : sel ? 0xFFFFAA00 : 0xFFE0E0E0);
             }
-            ImGui.endChild();
-        }
-        ImGui.spacing();
-        boolean hs = selectedVideoIndex >= 0 && selectedVideoIndex < tot;
-        if (!hs) ImGui.beginDisabled();
-        if (ImGui.button("× 删除", BUTTON_W, BUTTON_H)) { VideoPlayerClientNetworking.removeVideoFromPlaylist(player.id(), selectedVideoIndex); selectedVideoIndex = -1; }
-        if (!hs) ImGui.endDisabled();
-        ImGui.sameLine();
-        if (ImGui.button("+ 添加URL", BUTTON_W, BUTTON_H)) {
-            String url = urlInputBuf.toString().trim();
-            if (!url.isEmpty()) { VideoPlayerClientNetworking.addVideoToPlaylist(player.id(), url, 1920, 1080, 30); urlInputBuf.set(""); }
-        }
-        ImGui.sameLine(); ImGui.setNextItemWidth(Math.max(300f, ImGui.getContentRegionAvailX() - 10f));
-        if (ImGui.inputText("##url", urlInputBuf, imgui.flag.ImGuiInputTextFlags.EnterReturnsTrue) || ImGui.isItemDeactivatedAfterEdit()) {
-            String url = urlInputBuf.toString().trim();
-            if (!url.isEmpty()) { VideoPlayerClientNetworking.addVideoToPlaylist(player.id(), url, 1920, 1080, 30); urlInputBuf.set(""); }
         }
     }
 
-    private void renderScreenTab(VideoPlayerData player) {
-        if (player.screens().isEmpty()) {
-            ImGui.textColored(0.4f, 0.4f, 0.4f, 1f, "（暂无屏幕）"); ImGui.spacing();
-            if (ImGui.button("+ 新建屏幕", BUTTON_W, BUTTON_H)) createScreenFor(player);
+    // ==================== 屏幕设置页签 ====================
+    private void renderScreenTab(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                  VideoPlayerData player, int px, int py, int pw) {
+        List<VideoScreenData> screens = player.screens();
+        if (screens.isEmpty()) {
+            graphics.text(this.font, "（暂无屏幕，请先创建）", px + 2, py, 0xFF888888);
             return;
         }
-        if (selectedScreenIndex < 0 || selectedScreenIndex >= player.screens().size()) selectedScreenIndex = 0;
-        VideoScreenData screen = player.screens().get(selectedScreenIndex);
-        // only load UV from server when switching screens, not every frame
-        java.util.UUID curScreenId = screen.id();
-        if (!curScreenId.equals(lastEditedScreenId)) {
-            lastEditedScreenId = curScreenId;
-            UvTransform ut = screen.uvTransform();
-            uvOffsetX = (float) (ut.offsetU() * 500.0); uvOffsetY = (float) (ut.offsetV() * 500.0);
-            uvScaleU = (float) ut.scaleU(); uvScaleV = (float) ut.scaleV(); rotationY = (float) ut.rotationDegrees();
-            uvFlipU = ut.flipU(); uvFlipV = ut.flipV();
+        if (LeftPanelHelper.selectedScreenIndex < 0 || LeftPanelHelper.selectedScreenIndex >= screens.size())
+            LeftPanelHelper.selectedScreenIndex = 0;
+        VideoScreenData screen = getSelectedScreen();
+        uvEditor.loadFromScreen(screen);
+
+        int curY = py + 4; // 顶部留白
+        graphics.text(this.font, "◎ " + screen.name(), px + 2, curY, 0xFFCCCCFF);
+        graphics.text(this.font, screen.dimension().identifier() + "  ·  " + screen.vertices().size() + " 顶点",
+                px + 2, curY + ENTRY_H, 0xFF888888);
+        curY += ENTRY_H * 2 + 4;
+
+        // 屏幕选择器（多屏幕时）
+        if (screens.size() > 1) {
+            for (int i = 0; i < screens.size(); i++) {
+                int sx = px + i * 80;
+                boolean s = (i == LeftPanelHelper.selectedScreenIndex);
+                if (s) graphics.fill(sx, curY, sx + 76, curY + ENTRY_H, 0xFF444444);
+                graphics.text(this.font, (s ? "● " : "○ ") + screens.get(i).name(), sx + 2, curY + 1,
+                        s ? 0xFF55FF55 : 0xFFE0E0E0);
+            }
+            curY += ENTRY_H + 6;
         }
-        ImGui.textColored(0.8f, 0.8f, 1f, 1f, screen.name());
-        ImGui.textColored(0.6f, 0.6f, 0.6f, 1f, screen.dimension().identifier() + ", " + screen.vertices().size() + " 顶点");
-        ImGui.spacing();
 
-        if (player.screens().size() > 1) {
-            ImGui.text("选择:"); ImGui.sameLine(); ImGui.setNextItemWidth(140f);
-            String[] sn = player.screens().stream().map(VideoScreenData::name).toArray(String[]::new);
-            ImInt si = new ImInt(selectedScreenIndex);
-            if (ImGui.combo("##ssel", si, sn)) selectedScreenIndex = si.get();
-            ImGui.spacing();
+        // UV 预览（按视频宽高比）
+        int uvH = Math.min(pw * 9 / 16, Math.max(80, 100));
+        int ci = player.playbackState().currentIndex();
+        float va = 16f / 9f;
+        if (ci >= 0 && ci < player.playlist().size()) {
+            var src = player.playlist().get(ci);
+            if (src.originalWidth() > 0 && src.originalHeight() > 0)
+                va = (float) src.originalWidth() / src.originalHeight();
+        }
+        uvEditor.videoAspect = va;
+        uvEditor.render(graphics, this.font, mouseX, mouseY, player, screen, px, curY, pw, uvH);
+        curY += uvH + 8;
+
+        // === 5 个滑块 ===
+        scrSliderBaseY = curY;
+        scrSliderX = px + SLIDER_LABEL_W + 4;
+        scrSliderW = Math.min(pw - SLIDER_LABEL_W - SLIDER_VAL_W - 12, 150);
+
+        curY = renderSliderRow(graphics, px, curY, "旋转",
+                (uvEditor.rotationY + 180) / 360f, String.format("%.0f°", uvEditor.rotationY), 0, mouseX, mouseY);
+        curY = renderSliderRow(graphics, px, curY, "缩放",
+                (uvEditor.uvScaleU - 0.5f) / 1.5f,
+                String.format("%.0f%%", uvEditor.uvScaleU * 100), 1, mouseX, mouseY);
+        curY = renderSliderRow(graphics, px, curY, "偏移U",
+                (uvEditor.uvOffsetX + 500) / 1000f, String.format("%.0f", uvEditor.uvOffsetX), 2, mouseX, mouseY);
+        curY = renderSliderRow(graphics, px, curY, "偏移V",
+                (uvEditor.uvOffsetY + 500) / 1000f, String.format("%.0f", uvEditor.uvOffsetY), 3, mouseX, mouseY);
+        curY += 8;
+
+        // 翻转按钮
+        scrFlipBtnY = curY;
+        drawUniBtn(graphics, px + 4, curY, 70, 16, uvEditor.uvFlipU ? "[✓] 水平翻转" : "水平翻转", mouseX, mouseY);
+        drawUniBtn(graphics, px + 78, curY, 70, 16, uvEditor.uvFlipV ? "[✓] 垂直翻转" : "垂直翻转", mouseX, mouseY);
+        curY += 20;
+
+        // 声道按钮
+        scrChanBtnY = curY;
+        ScreenChannelState ch = screen.channelState();
+        drawUniBtn(graphics, px + 4, curY, 54, 16, ch.leftEnabled() ? "[✓] 左声道" : "左声道", mouseX, mouseY);
+        drawUniBtn(graphics, px + 62, curY, 54, 16, ch.rightEnabled() ? "[✓] 右声道" : "右声道", mouseX, mouseY);
+        curY += 28;
+
+        // 操作按钮（跟随内容滚动）
+        scrSaveBtnY = curY;
+        drawUniBtn(graphics, px + 4, curY, 68, 20, "保存 UV", mouseX, mouseY);
+        drawUniBtn(graphics, px + 76, curY, 68, 20, "+ 新屏幕", mouseX, mouseY);
+        drawUniBtn(graphics, px + 148, curY, 68, 20, "× 删屏幕", mouseX, mouseY);
+    }
+
+    private int renderSliderRow(GuiGraphicsExtractor g, int px, int y, String label,
+                                 float frac, String val, int idx, int mx, int my) {
+        g.text(this.font, label, px + 2, y + 2, 0xFFE0E0E0);
+        g.text(this.font, val, scrSliderX + scrSliderW + 4, y + 2, 0xFFAAAAAA);
+        int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
+        boolean hov = sliderEditMode == null && sliderDragging == null
+                && mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= sy && my <= sy + SLIDER_H;
+        renderSlider(g, scrSliderX, y, scrSliderW, SLIDER_H, frac, null, hov);
+        return y + SLIDER_H + 4;
+    }
+
+    // ==================== 鼠标事件 ====================
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        int mx = (int) event.x(), my = (int) event.y();
+
+        // 关闭按钮
+        if (mx >= this.width - 20 && mx <= this.width - 4 && my >= 4 && my <= 20) { this.onClose(); return true; }
+
+        // 左侧面板
+        if (doubleClick && leftPanel.mouseDoubleClicked(mx, my, cachedPlayers)) return true;
+        if (leftPanel.mouseClicked(mx, my, cachedPlayers)) return true;
+
+        // Area 滚动条处理
+        if (rightPaneArea != null && rightPaneArea.mouseClicked(event, doubleClick)) return true;
+
+        if (!hasSelectedPlayer()) return super.mouseClicked(event, doubleClick);
+
+        // 右侧面板内容：仅当鼠标在可见区域内才做滚动转换
+        int availRH = this.height - rightPaneY - 10;
+        if (my < rightPaneY || my > rightPaneY + availRH)
+            return super.mouseClicked(event, doubleClick);
+
+        int pmy = scrollAdjY(my);
+        int rp = rightPaneX;
+
+        // --- 播放控制页签 ---
+        if (activeTab == 0) {
+            if (seekBar.isInBar(mx, pmy)) { seekBar.startDrag(mx); return true; }
+            if (clickBtn(mx, pmy, transportPrevX, transportBtnY, TRANSPORT_BTN_SIZE)) { playPrev(); return true; }
+            if (clickBtn(mx, pmy, transportPlayX, transportBtnY, TRANSPORT_BTN_SIZE)) { togglePlayPause(); return true; }
+            if (clickBtn(mx, pmy, transportStopX, transportBtnY, TRANSPORT_BTN_SIZE)) { stopPlayback(); return true; }
+            if (clickBtn(mx, pmy, transportNextX, transportBtnY, TRANSPORT_BTN_SIZE)) { playNext(); return true; }
+            if (inRect(mx, pmy, volSliderX, volSliderY, volSliderW, SLIDER_H))
+            { sliderDragging = "volume"; updateVolumeFromMouse(mx); return true; }
+            if (inRect(mx, pmy, qualityBtnX, qualityBtnY, qualityBtnW, 20)) { nextQuality(); return true; }
+            if (inRect(mx, pmy, qualityBtnX - 18, qualityBtnY, 18, 20)) { prevQuality(); return true; }
+            if (inRect(mx, pmy, qualityBtnX + qualityBtnW, qualityBtnY, 18, 20)) { nextQuality(); return true; }
+            if (inRect(mx, pmy, modeBtnX, modeBtnY, modeBtnW, 20)) { cyclePlaybackMode(); return true; }
         }
 
-        // UV preview showing all screens with actual UV mapping
-        float ps = ImGui.getContentRegionAvailX() - 20f;
-        // 子窗口比frame大一圈，让UV扩展到0-1之外时（信箱效果）可见
-        float pad = 30f;
-        float frameAreaW = ps - pad * 2;
-        float frameAreaH = frameAreaW * 9f / 16f;
-        float childW = ps;
-        float childH = frameAreaH + pad * 2;
-        if (ImGui.beginChild("##uv", childW, childH, true, ImGuiWindowFlags.NoScrollWithMouse)) {
-            ImVec2 cur = ImGui.getCursorScreenPos();
-            ImVec2 av = new ImVec2(childW, childH);
+        // --- 播放列表页签 ---
+        if (activeTab == 1 && inRect(mx, pmy, playlistX, playlistY, playlistW, playlistH)) {
+            var pl = getSelectedPlayer().playlist();
+            int idx = (pmy - playlistY - 2) / (ENTRY_H + 2) + playlistScroll;
+            if (idx >= 0 && idx < pl.size()) {
+                selectedVideoIndex = idx;
+                if (doubleClick) {
+                    PlaybackState pb = getSelectedPlayer().playbackState();
+                    VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(),
+                            PlaybackStatus.PLAYING, pb.mode(), idx, pb.volume());
+                }
+            }
+            return true;
+        }
 
-            // frame居中于子窗口内，周围有padding
-            float zoom = previewZoom;
-            float frameCX = cur.x + childW / 2f + previewOffsetX;
-            float frameCY = cur.y + childH / 2f + previewOffsetY;
-            float frameW = frameAreaW * zoom;
-            float frameH = frameAreaH * zoom;
-            float frameX = frameCX - frameW / 2f;
-            float frameY = frameCY - frameH / 2f;
+        // --- 屏幕设置页签 ---
+        if (activeTab == 2 && hasSelectedScreen()) {
+            if (event.button() == 2 && uvEditor.isInUVArea(mx, pmy))
+            { panningUV = true; dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
+            if (doubleClick) { String s = hitSlidAt(mx, pmy); if (s != null) { startSliderEdit(s); return true; } }
+            String s = hitSlidAt(mx, pmy);
+            if (s != null) { sliderDragging = s; return true; }
+            if (uvEditor.mouseClicked(mx, pmy, getSelectedScreen()))
+            { dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
 
-            // 外层区域深灰 + frame区域黑色，zoom变化时frame大小可见
-            ImGui.getWindowDrawList().addRectFilled(cur.x, cur.y, cur.x + av.x, cur.y + av.y, 0xFF1A1A1A);
-            ImGui.getWindowDrawList().addRectFilled(frameX, frameY, frameX + frameW, frameY + frameH, 0xFF000000);
-            ImGui.pushClipRect(cur.x, cur.y, cur.x + av.x, cur.y + av.y, true);
+            if (inRect(mx, pmy, rp + 4, scrFlipBtnY, 70, 16))
+            { uvEditor.uvFlipU = !uvEditor.uvFlipU; uvEditor.markEdited(); saveUV(); return true; }
+            if (inRect(mx, pmy, rp + 78, scrFlipBtnY, 70, 16))
+            { uvEditor.uvFlipV = !uvEditor.uvFlipV; uvEditor.markEdited(); saveUV(); return true; }
 
-            ImGui.invisibleButton("##uvcap", av.x, av.y, 0);
-            boolean capH = ImGui.isItemHovered(), capA = ImGui.isItemActive();
+            VideoScreenData screen = getSelectedScreen();
+            ScreenChannelState ch = screen.channelState();
+            if (inRect(mx, pmy, rp + 4, scrChanBtnY, 54, 16)) {
+                VideoPlayerClientNetworking.updateScreenChannel(getSelectedPlayer().id(), screen.id(),
+                        new ScreenChannelState(!ch.leftEnabled(), ch.rightEnabled())); return true;
+            }
+            if (inRect(mx, pmy, rp + 62, scrChanBtnY, 54, 16)) {
+                VideoPlayerClientNetworking.updateScreenChannel(getSelectedPlayer().id(), screen.id(),
+                        new ScreenChannelState(ch.leftEnabled(), !ch.rightEnabled())); return true;
+            }
 
-            // Preview zoom: Ctrl+wheel
-            if (capH && ImGui.getIO().getKeyCtrl()) {
-                float wh = ImGui.getIO().getMouseWheel();
-                if (wh != 0) {
-                    float oldZoom = zoom;
-                    zoom = Math.max(0.1f, Math.min(10f, zoom + wh * 0.1f));
-                    float zoomFactor = zoom / oldZoom;
-                    ImVec2 mp = ImGui.getIO().getMousePos();
-                    previewOffsetX = (float)(frameCX - cur.x - (mp.x - cur.x - (mp.x - frameCX) / zoomFactor));
-                    previewOffsetY = (float)(frameCY - cur.y - (mp.y - cur.y - (mp.y - frameCY) / zoomFactor));
-                    previewZoom = zoom;
+            // 屏幕选择器
+            List<VideoScreenData> screens = getSelectedPlayer().screens();
+            if (screens.size() > 1) {
+                int selY = rightPaneY + ENTRY_H * 2 + 4 + 4;
+                for (int i = 0; i < screens.size(); i++) {
+                    int sx = rp + i * 80;
+                    if (mx >= sx && mx <= sx + 76 && pmy >= selY && pmy <= selY + ENTRY_H)
+                    { LeftPanelHelper.selectedScreenIndex = i; return true; }
                 }
             }
 
-            // 如果Ctrl+wheel改变了zoom，重新计算frame坐标
-            frameCX = cur.x + childW / 2f + previewOffsetX;
-            frameCY = cur.y + childH / 2f + previewOffsetY;
-            frameW = frameAreaW * zoom;
-            frameH = frameAreaH * zoom;
-            frameX = frameCX - frameW / 2f;
-            frameY = frameCY - frameH / 2f;
-
-            // 先绘制所有屏幕的UV叠加层（底层→顶层）
-            // draw unselected screens first (behind)
-            for (int screenIdx = 0; screenIdx < player.screens().size(); screenIdx++) {
-                VideoScreenData s = player.screens().get(screenIdx);
-                if (s.id().equals(curScreenId)) continue;
-                
-                if (s.vertices().size() >= 3) {
-                    // 未选中屏幕：透明填充 + 灰色边框 + 灰色顶点
-                    drawScreenUV(s, null, frameX, frameY, frameW, frameH, 0x00444444, 0xAA666666, 0xFF888888);
+            // 操作按钮
+            if (inRect(mx, pmy, rp + 4, scrSaveBtnY, 68, 20)) { saveUV(); return true; }
+            if (inRect(mx, pmy, rp + 76, scrSaveBtnY, 68, 20)) {
+                if (hasSelectedPlayer()) createScreenFor(getSelectedPlayer()); return true;
+            }
+            if (inRect(mx, pmy, rp + 148, scrSaveBtnY, 68, 20)) {
+                if (hasSelectedPlayer() && hasSelectedScreen()) {
+                    VideoPlayerClientNetworking.deleteScreen(getSelectedPlayer().id(), getSelectedScreen().id());
+                    LeftPanelHelper.selectedScreenIndex = -1;
                 }
+                return true;
             }
-
-            // draw selected screen on top (colorful) and handle editing
-            boolean screenEditing = false;
-            ImVec2 mousePos = ImGui.getIO().getMousePos();
-            float mouseU = (mousePos.x - frameX) / frameW;
-            float mouseV = (mousePos.y - frameY) / frameH;
-
-            for (int screenIdx = 0; screenIdx < player.screens().size(); screenIdx++) {
-                VideoScreenData s = player.screens().get(screenIdx);
-                if (!s.id().equals(curScreenId)) continue;
-                
-                if (s.vertices().size() >= 3) {
-                    // 使用本地编辑变量构建UV变换，这样拖动滑块时叠加层会实时更新
-                    UvTransform localUv = new UvTransform(
-                        uvOffsetX / 500.0, uvOffsetY / 500.0, uvScaleU, uvScaleV, rotationY, uvFlipU, uvFlipV);
-                    // 选中屏幕：透明填充 + 亮粉边框 + 青色顶点（线框叠加层）
-                    drawScreenUV(s, localUv, frameX, frameY, frameW, frameH, 0x00FF4488, 0xFFFF4488, 0xFF66FFFF);
-
-                    // 使用本地编辑变量（而不是服务器数据）来计算控制手柄位置
-                    float su = uvScaleU, sv = uvScaleV;
-                    float ou = uvOffsetX / 500.0f, ov = uvOffsetY / 500.0f;
-                    float rot = rotationY;
-                    boolean flpu = uvFlipU, flpv = uvFlipV;
-
-                    float ca = (float) Math.cos(Math.toRadians(rot));
-                    float sa = (float) Math.sin(Math.toRadians(rot));
-
-                    // calculate screen center in UV space
-                    float screenCenterU = ou + 0.5f;
-                    float screenCenterV = ov + 0.5f;
-
-                    // calculate screen bounds after transform
-                    float[] bounds = {1f, -1f, 1f, -1f}; // minU, maxU, minV, maxV
-                    List<Vector3d> vs = new ArrayList<>();
-                    List<Double> dists = new ArrayList<>();
-                    for (var v : s.vertices()) { vs.add(v.toVector()); dists.add(v.pitch()); dists.add(v.yaw()); }
-                    List<double[]> stitched = sashwind.mc.mod.ffcraft.client.player.Three2Flat.getStitchedUVs(vs, dists);
-                    for (double[] uvs : stitched) {
-                        for (int i = 0; i < uvs.length / 2; i++) {
-                            float u = (float) uvs[i * 2], v = (float) uvs[i * 2 + 1];
-                            if (flpu) u = 1 - u;
-                            if (flpv) v = 1 - v;
-                            float ru = (ca * (u - 0.5f) - sa * (v - 0.5f)) * su + ou + 0.5f;
-                            float rv = (sa * (u - 0.5f) + ca * (v - 0.5f)) * sv + ov + 0.5f;
-                            if (ru < bounds[0]) bounds[0] = ru;
-                            if (ru > bounds[1]) bounds[1] = ru;
-                            if (rv < bounds[2]) bounds[2] = rv;
-                            if (rv > bounds[3]) bounds[3] = rv;
-                        }
-                    }
-
-                    // 手柄尺寸（固定像素，不随zoom/frame变化）
-                    float handleRadiusPx = 10f;
-                    float edgeHandlePx = 7f;
-                    // 碰撞检测用的UV空间阈值
-                    float handleRadiusUV = handleRadiusPx / frameW;
-                    float edgeHandleUV = edgeHandlePx / frameW;
-
-                    // draw center handle
-                    float centerX = frameX + screenCenterU * frameW;
-                    float centerY = frameY + screenCenterV * frameH;
-                    ImGui.getWindowDrawList().addCircleFilled(centerX, centerY, handleRadiusPx, 0xFFFF66AA, 12);
-                    ImGui.getWindowDrawList().addCircle(centerX, centerY, handleRadiusPx, 0xFFFFFFFF, 12, 2f);
-
-                    // draw edge handles (4 corners)
-                    float[][] corners = {
-                        {bounds[0], bounds[2]}, {bounds[1], bounds[2]},
-                        {bounds[0], bounds[3]}, {bounds[1], bounds[3]}
-                    };
-                    for (float[] corner : corners) {
-                        float cx = frameX + corner[0] * frameW;
-                        float cy = frameY + corner[1] * frameH;
-                        ImGui.getWindowDrawList().addRectFilled(cx - edgeHandlePx, cy - edgeHandlePx,
-                                cx + edgeHandlePx, cy + edgeHandlePx, 0xFFFF66AA);
-                        ImGui.getWindowDrawList().addRect(cx - edgeHandlePx, cy - edgeHandlePx,
-                                cx + edgeHandlePx, cy + edgeHandlePx, 0xFFFFFFFF, 1f);
-                    }
-
-                    // check if mouse is over screen
-                    boolean overCenter = false, overEdge = false;
-                    int overCorner = -1;
-
-                    if (capH) {
-                        float distToCenter = (float) Math.sqrt(Math.pow(mouseU - screenCenterU, 2) + Math.pow(mouseV - screenCenterV, 2));
-                        if (distToCenter < handleRadiusUV) {
-                            overCenter = true;
-                        } else {
-                            for (int i = 0; i < corners.length; i++) {
-                                float dist = (float) Math.sqrt(Math.pow(mouseU - corners[i][0], 2) + Math.pow(mouseV - corners[i][1], 2));
-                                if (dist < edgeHandleUV) {
-                                    overEdge = true;
-                                    overCorner = i;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // handle screen editing
-                    if (!ImGui.getIO().getKeyCtrl()) {
-                        if (overCenter && ImGui.isMouseClicked(0)) {
-                            editingMode = "move";
-                            editStartU = mouseU;
-                            editStartV = mouseV;
-                            editStartOffsetX = uvOffsetX;
-                            editStartOffsetY = uvOffsetY;
-                            screenEditing = true;
-                        } else if (overEdge && ImGui.isMouseClicked(0)) {
-                            editingMode = "scale";
-                            editStartU = mouseU;
-                            editStartV = mouseV;
-                            editStartScale = uvScaleU;
-                            editStartScaleV = uvScaleV;
-                            editStartOffsetX = uvOffsetX;
-                            editStartOffsetY = uvOffsetY;
-                            editCorner = overCorner;
-                            // 记录点击位置到屏幕中心的初始距离（UV空间）
-                            editStartDist = (float) Math.sqrt(
-                                Math.pow(mouseU - screenCenterU, 2) + Math.pow(mouseV - screenCenterV, 2));
-                            screenEditing = true;
-                        }
-
-                        if (!ImGui.isMouseDown(0)) {
-                            editingMode = null;
-                        }
-
-                        if ("move".equals(editingMode) && ImGui.isMouseDragging(0, 0f)) {
-                            ImVec2 d = ImGui.getMouseDragDelta(0, 0);
-                            float du = d.x / frameW;
-                            float dv = d.y / frameH;
-                            // 不用resetMouseDragDelta — editStartOffset + 累计delta = 正确位置
-                            uvOffsetX = editStartOffsetX + du * 500f;
-                            uvOffsetY = editStartOffsetY + dv * 500f;
-                            screenEditing = true;
-                        } else if ("scale".equals(editingMode) && ImGui.isMouseDragging(0, 0f)) {
-                            // 以中心手柄为锚点的缩放：计算鼠标到中心的当前距离，与初始距离比较
-                            float curDist = (float) Math.sqrt(
-                                Math.pow(mouseU - screenCenterU, 2) + Math.pow(mouseV - screenCenterV, 2));
-                            if (editStartDist > 0.001f) {
-                                float ratio = Math.max(0.1f, Math.min(3f, curDist / editStartDist));
-                                uvScaleU = editStartScale * ratio;
-                                uvScaleV = editStartScaleV * ratio;
-                            }
-                            // 中心不动，不改变offset
-                            uvOffsetX = editStartOffsetX;
-                            uvOffsetY = editStartOffsetY;
-
-                            screenEditing = true;
-                        }
-                    }
-
-                    ImGui.getWindowDrawList().addText(frameX + 4f, frameY + frameH - 14f, 0xFFFF66AA, s.name());
-                }
-            }
-
-            // Preview pan: Ctrl+drag (only when NOT editing screen)
-            if (!screenEditing && capA && ImGui.isMouseDragging(0, 0f) && ImGui.getIO().getKeyCtrl()) {
-                ImVec2 d = ImGui.getMouseDragDelta(0, 0);
-                previewOffsetX += d.x; previewOffsetY += d.y; ImGui.resetMouseDragDelta(0);
-            }
-            // 网格线和UV边框始终绘制在最顶层，确保缩放效果可见
-            if (zoom <= 5f) {
-                for (int g = 0; g <= 10; g++) {
-                    float gx = frameX + frameW * g / 10f;
-                    float gy = frameY + frameH * g / 10f;
-                    if (gx >= cur.x && gx <= cur.x + av.x) {
-                        ImGui.getWindowDrawList().addLine(gx, Math.max(cur.y, frameY), gx, Math.min(cur.y + av.y, frameY + frameH), 0x50FFFFFF, 1.5f);
-                    }
-                    if (gy >= cur.y && gy <= cur.y + av.y) {
-                        ImGui.getWindowDrawList().addLine(Math.max(cur.x, frameX), gy, Math.min(cur.x + av.x, frameX + frameW), gy, 0x50FFFFFF, 1.5f);
-                    }
-                }
-            }
-
-            // draw UV frame boundaries (0,0) to (1,1)
-            ImGui.getWindowDrawList().addRect(frameX, frameY, frameX + frameW, frameY + frameH, 0xFFAAAAAA, 3f);
-            ImGui.getWindowDrawList().addText(frameX + 4f, frameY + 4f, 0xFFFFFFFF, "(0,0)");
-            ImGui.getWindowDrawList().addText(frameX + frameW - 30f, frameY + 4f, 0xFFFFFFFF, "(1,0)");
-            ImGui.getWindowDrawList().addText(frameX + 4f, frameY + frameH - 14f, 0xFFFFFFFF, "(0,1)");
-            ImGui.getWindowDrawList().addText(frameX + frameW - 30f, frameY + frameH - 14f, 0xFFFFFFFF, "(1,1)");
-
-            ImGui.popClipRect();
-        } ImGui.endChild();
-
-        // Preview zoom slider
-        ImGui.spacing();
-        ImGui.text("预览缩放"); ImGui.sameLine(); ImGui.setNextItemWidth(140f);
-        int[] zv = {(int) (previewZoom * 100)};
-        if (ImGui.sliderInt("##previewZoom", zv, 10, 500)) {
-            previewZoom = zv[0] / 100f;
-            previewOffsetX = 0f;
-            previewOffsetY = 0f;
-            System.out.println("[Zoom] 缩放滑块改变: previewZoom=" + previewZoom + " (" + zv[0] + "%)");
         }
-        ImGui.sameLine(); ImGui.text(String.format("%.0f%%", previewZoom * 100));
 
-        ImGui.spacing(); ImGui.separatorText("UV 参数"); ImGui.spacing();
-        
-        // Rotation with double-click edit
-        ImGui.text("旋转 (°) "); ImGui.sameLine(); ImGui.setNextItemWidth(120f);
-        int[] rv = {(int) rotationY};
-        if (ImGui.sliderInt("##rot", rv, 0, 360)) { rotationY = rv[0]; uvEdited(); }
-        if (ImGui.isItemHovered() && ImGui.isMouseDoubleClicked(0)) {
-            editingRotation = true;
-            rotationEditBuf.set(String.valueOf((int) rotationY));
-        }
-        ImGui.sameLine();
-        if (editingRotation) {
-            ImGui.setNextItemWidth(60f);
-            ImGui.inputText("##rotEdit", rotationEditBuf);
-            ImGui.setItemDefaultFocus();
-            if (ImGui.isItemDeactivatedAfterEdit() || ImGui.isKeyPressed(imgui.flag.ImGuiKey.Enter)) {
-                try {
-                    int val = Integer.parseInt(rotationEditBuf.toString());
-                    rotationY = Math.max(0, Math.min(360, val));
-                } catch (NumberFormatException e) {}
-                editingRotation = false;
-            }
-            if (ImGui.isKeyPressed(imgui.flag.ImGuiKey.Escape)) editingRotation = false;
-        } else {
-            ImGui.text(String.format("%d°", (int) rotationY));
-        }
-        ImGui.spacing();
-        int[] sv = {(int) (uvScaleU * 100)}; ImGui.text("缩放 (%) "); ImGui.sameLine(); ImGui.setNextItemWidth(120f);
-        if (ImGui.sliderInt("##sc", sv, 50, 200)) {
-            float newScale = sv[0] / 100f;
-            float ratio = newScale / uvScaleU;
-            uvScaleU = newScale;
-            uvScaleV *= ratio;
-            uvEdited();
-        } ImGui.spacing();
-        int[] oxv = {(int) uvOffsetX}; ImGui.text("偏移 X  "); ImGui.sameLine(); ImGui.setNextItemWidth(120f);
-        if (ImGui.sliderInt("##ox", oxv, -500, 500)) { uvOffsetX = oxv[0]; uvEdited(); } ImGui.spacing();
-        int[] oyv = {(int) uvOffsetY}; ImGui.text("偏移 Y  "); ImGui.sameLine(); ImGui.setNextItemWidth(120f);
-        if (ImGui.sliderInt("##oy", oyv, -500, 500)) { uvOffsetY = oyv[0]; uvEdited(); }
-        ImGui.spacing();
-
-        // Flip controls
-        ImGui.text("翻转: "); ImGui.sameLine();
-        if (ImGui.checkbox("水平##flipU", uvFlipU)) {
-            uvFlipU = !uvFlipU; uvEdited();
-        }
-        ImGui.sameLine();
-        if (ImGui.checkbox("垂直##flipV", uvFlipV)) {
-            uvFlipV = !uvFlipV; uvEdited();
-        }
-        ImGui.spacing(); ImGui.separator();
-
-        // Channel toggle
-        var ch = screen.channelState();
-        boolean leftOn = ch.leftEnabled(), rightOn = ch.rightEnabled();
-        ImGui.text("声道: "); ImGui.sameLine();
-        if (ImGui.checkbox("左##chL", leftOn)) {
-            leftOn = !leftOn;
-            VideoPlayerClientNetworking.updateScreenChannel(player.id(), screen.id(),
-                    new ScreenChannelState(leftOn, rightOn));
-        }
-        ImGui.sameLine();
-        if (ImGui.checkbox("右##chR", rightOn)) {
-            rightOn = !rightOn;
-            VideoPlayerClientNetworking.updateScreenChannel(player.id(), screen.id(),
-                    new ScreenChannelState(leftOn, rightOn));
-        }
-        ImGui.spacing();
-
-        if (ImGui.button("保存 UV", BUTTON_W, BUTTON_H)) {
-            UvTransform uv = new UvTransform(uvOffsetX / 500.0, uvOffsetY / 500.0, uvScaleU, uvScaleV, rotationY, uvFlipU, uvFlipV);
-            System.out.println("[UV Send] Sending UV: offsetU=" + uv.offsetU() + ", offsetV=" + uv.offsetV() +
-                    ", scaleU=" + uv.scaleU() + ", scaleV=" + uv.scaleV() + ", rotation=" + uv.rotationDegrees());
-            VideoPlayerClientNetworking.updateScreenUv(player.id(), screen.id(), uv);
-            sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.markUvManuallyEdited(screen.id());
-        }
-        ImGui.sameLine();
-        if (ImGui.button("+ 新建屏幕", BUTTON_W, BUTTON_H)) createScreenFor(player);
-        ImGui.sameLine();
-        if (ImGui.button("× 删除屏幕", BUTTON_W, BUTTON_H)) { VideoPlayerClientNetworking.deleteScreen(player.id(), screen.id()); selectedScreenIndex = -1; }
+        return super.mouseClicked(event, doubleClick);
     }
 
-    private void uvEdited() {
-        if (lastEditedScreenId != null) {
-            sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.markUvManuallyEdited(lastEditedScreenId);
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        // Area 滚动条释放
+        if (rightPaneArea != null && rightPaneArea.mouseReleased(event)) return true;
+
+        if (seekBar.dragging && hasSelectedPlayer()) { seekBar.finishDrag(getSelectedPlayer().id()); sliderDragging = null; return true; }
+        if ("volume".equals(sliderDragging)) { sliderDragging = null; return true; }
+        if (sliderDragging != null) { sliderDragging = null; uvEditor.markEdited(); saveUV(); return true; }
+        if (uvEditor.isEditing()) { uvEditor.finishDrag(); dragLockedScroll = 0; saveUV(); return true; }
+        if (panningUV) { panningUV = false; dragLockedScroll = 0; return true; }
+        return super.mouseReleased(event);
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
+        // Area 滚动条拖拽
+        if (rightPaneArea != null && rightPaneArea.mouseDragged(event, dx, dy)) return true;
+
+        int mx = (int) event.x();
+        if (seekBar.dragging) { seekBar.updateDrag(mx); return true; }
+        if ("volume".equals(sliderDragging)) { updateVolumeFromMouse(mx); return true; }
+        if (sliderDragging != null) { updateScreenSliderFromMouse(mx); return true; }
+        if (uvEditor.isEditing()) { uvEditor.mouseDragged(mx, (int) event.y() + dragLockedScroll); return true; }
+        if (panningUV) { uvEditor.panDrag(mx, (int) event.y() + dragLockedScroll, dx, dy); return true; }
+        return super.mouseDragged(event, dx, dy);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double sx, double sy) {
+        int mx = (int) mouseX, my = (int) mouseY;
+
+        // 左侧面板滚动
+        if (leftPanel.mouseScrolled(mx, my, sy, cachedPlayers)) return true;
+
+        // 播放列表内部滚动
+        if (activeTab == 1 && inRect(mx, my, playlistX, playlistY, playlistW, playlistH) && hasSelectedPlayer()) {
+            int vis = playlistH / (ENTRY_H + 2);
+            playlistScroll = Math.max(0, Math.min(playlistScroll - (int) sy * 2,
+                    Math.max(0, getSelectedPlayer().playlist().size() - vis)));
+            return true;
+        }
+
+        // UV 缩放
+        if (activeTab == 2 && uvEditor.zoomWheel(mx, scrollAdjY(my), sy)) return true;
+
+        // Area 外层滚动（仅内容超出时才消费事件）
+        if (rightPaneArea != null && rightPaneArea.mouseScrolled(mouseX, mouseY, sx, sy)) return true;
+
+        return super.mouseScrolled(mouseX, mouseY, sx, sy);
+    }
+
+    // ==================== 键盘事件 ====================
+    @Override
+    public boolean keyPressed(KeyEvent e) {
+        if (rightPaneArea != null && rightPaneArea.keyPressed(e)) return true;
+
+        int k = e.key();
+        if (k == GLFW.GLFW_KEY_ENTER && valueEditBox.isVisible()) { confirmSliderEdit(); return true; }
+        if (k == GLFW.GLFW_KEY_ESCAPE && valueEditBox.isVisible()) { cancelSliderEdit(); return true; }
+        if (k == GLFW.GLFW_KEY_ENTER && leftPanel.isRenameInputVisible()) { confirmRename(); return true; }
+        if (k == GLFW.GLFW_KEY_ESCAPE && leftPanel.isRenameInputVisible())
+        { leftPanel.cancelRename(); renameInput.visible = false; return true; }
+        if (k == GLFW.GLFW_KEY_SPACE && activeTab == 0 && hasSelectedPlayer()
+                && !valueEditBox.isVisible() && !renameInput.isVisible()) { togglePlayPause(); return true; }
+        if (k == GLFW.GLFW_KEY_S && ctrlDown() && activeTab == 2 && hasSelectedPlayer() && hasSelectedScreen())
+        { saveUV(); return true; }
+        return super.keyPressed(e);
+    }
+
+    @Override
+    public boolean keyReleased(KeyEvent e) {
+        if (rightPaneArea != null && rightPaneArea.keyReleased(e)) return true;
+        return super.keyReleased(e);
+    }
+
+    @Override
+    public boolean charTyped(CharacterEvent e) {
+        if (rightPaneArea != null && rightPaneArea.charTyped(e)) return true;
+        if (valueEditBox.isVisible()) { valueEditBox.charTyped(e); return true; }
+        return super.charTyped(e);
+    }
+
+    // ==================== Widget 可见性 ====================
+    private void updateWidgetVisibility() {
+        boolean hp = hasSelectedPlayer();
+        for (var c : this.children()) {
+            if (!(c instanceof net.minecraft.client.gui.components.AbstractWidget w)) continue;
+            if (c == renameInput || c == valueEditBox) continue;
+            String l = w.getMessage().getString();
+            if (isAlwaysVisible(l)) continue;
+            if (c == urlInput) { w.visible = activeTab == 1 && hp; continue; }
+            if ("+ 添加".equals(l) || "× 删除".equals(l)) { w.visible = activeTab == 1 && hp; continue; }
+            // 屏幕操作按钮已改为手动绘制，跟随滚动
         }
     }
 
-    private void createScreenFor(VideoPlayerData player) {
-        if (ClientScreenCreationManager.start(player.id(), player.name() + "-screen")) {
-            sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), null);
-            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() -> sashwind.mc.mod.ffcraft.client.drawlib.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
+    private static boolean isAlwaysVisible(String l) {
+        return "播放控制".equals(l) || "播放列表".equals(l) || "屏幕设置".equals(l)
+                || "+ 新建播放器".equals(l) || "× 删除播放器".equals(l);
+    }
+
+    // ==================== 重命名 ====================
+    private void syncRenameInput() {
+        if (leftPanel.isRenameInputVisible()) {
+            renameInput.visible = true;
+            renameInput.setX(leftPanel.getRenameInputX());
+            renameInput.setY(leftPanel.getRenameInputY(cachedPlayers));
+            renameInput.setWidth(leftPanel.getRenameInputW());
+            renameInput.setHeight(leftPanel.getRenameInputH());
+            if (!renameInput.getValue().equals(leftPanel.getRenameTarget()))
+                renameInput.setValue(leftPanel.getRenameTarget());
+            if (!renameInput.isFocused()) { setFocused(renameInput); renameInput.setFocused(true); }
+        } else { renameInput.visible = false; }
+    }
+
+    private void confirmRename() {
+        String r = leftPanel.confirmRename(cachedPlayers, renameInput.getValue());
+        if (r != null) {
+            if (r.startsWith("player:")) VideoPlayerClientNetworking.renamePlayer(
+                    UUID.fromString(r.substring(7)), renameInput.getValue().trim());
+            else if (r.startsWith("screen:") && hasSelectedPlayer()) VideoPlayerClientNetworking.renameScreen(
+                    getSelectedPlayer().id(), UUID.fromString(r.substring(7)), renameInput.getValue().trim());
+        }
+        renameInput.visible = false;
+    }
+
+    // ==================== 滑块交互（屏幕设置） ====================
+    private static final String[] SLIDER_KEYS = {"rotation", "scale", "offsetU", "offsetV"};
+
+    private String hitSlidAt(int mx, int my) {
+        for (int i = 0; i < SLIDER_KEYS.length; i++) {
+            int sy = scrSliderBaseY + i * (SLIDER_H + 4);
+            if (mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= sy && my <= sy + SLIDER_H)
+                return SLIDER_KEYS[i];
+        }
+        return null;
+    }
+
+    private float getSliderVal(String k) {
+        return switch (k) {
+            case "rotation" -> uvEditor.rotationY;
+            case "scale" -> uvEditor.uvScaleU;
+            case "offsetU" -> uvEditor.uvOffsetX;
+            case "offsetV" -> uvEditor.uvOffsetY;
+            default -> 0f;
+        };
+    }
+
+    private void setSliderVal(String k, float v) {
+        switch (k) {
+            case "rotation" -> uvEditor.rotationY = v;
+            case "scale" -> {
+                float ratio = uvEditor.uvScaleV > 0.001f ? uvEditor.uvScaleV / uvEditor.uvScaleU : 1f;
+                uvEditor.uvScaleU = Math.max(0.01f, Math.min(10f, v));
+                uvEditor.uvScaleV = Math.max(0.01f, uvEditor.uvScaleU * ratio);
+            }
+            case "offsetU" -> uvEditor.uvOffsetX = v;
+            case "offsetV" -> uvEditor.uvOffsetY = v;
         }
     }
 
-    private static String statusText(PlaybackState pb) {
-        return switch (pb.status()) { case PLAYING -> "播放中"; case PAUSED -> "已暂停"; case STOPPED -> "已停止"; };
+    private void startSliderEdit(String k) {
+        sliderEditMode = k;
+        int idx = Arrays.asList(SLIDER_KEYS).indexOf(k);
+        int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
+        valueEditBox.visible = true;
+        valueEditBox.setX(scrSliderX); valueEditBox.setY(sy); valueEditBox.setWidth(scrSliderW);
+        valueEditBox.setValue(String.format("%.2f", getSliderVal(k)));
+        setFocused(valueEditBox); valueEditBox.setFocused(true);
     }
+
+    private void confirmSliderEdit() {
+        if (sliderEditMode == null) return;
+        try {
+            float v = Float.parseFloat(valueEditBox.getValue().trim());
+            if ("scale".equals(sliderEditMode) && v <= 0) v = 0.01f;
+            setSliderVal(sliderEditMode, v); uvEditor.markEdited(); saveUV();
+        } catch (NumberFormatException ignored) {}
+        valueEditBox.visible = false; sliderEditMode = null;
+    }
+
+    private void cancelSliderEdit() { valueEditBox.visible = false; sliderEditMode = null; }
+
+    private void updateScreenSliderFromMouse(int mx) {
+        if (sliderDragging == null) return;
+        float f = Math.max(0f, Math.min(1f, (float) (mx - scrSliderX) / scrSliderW));
+        switch (sliderDragging) {
+            case "rotation" -> uvEditor.rotationY = -180 + f * 360;
+            case "scale" -> {
+                float oldU = uvEditor.uvScaleU;
+                float oldV = uvEditor.uvScaleV;
+                float ratio = oldV > 0.001f ? oldV / oldU : 1f;
+                // 匹配旧版 ImGui 范围: 50% ~ 200% (0.5 ~ 2.0)
+                float newU = Math.max(0.01f, Math.min(10f, 0.5f + f * 1.5f));
+                uvEditor.uvScaleU = newU;
+                uvEditor.uvScaleV = Math.max(0.01f, newU * ratio);
+            }
+            case "offsetU" -> uvEditor.uvOffsetX = -500 + f * 1000;
+            case "offsetV" -> uvEditor.uvOffsetY = -500 + f * 1000;
+        }
+    }
+
+    // ==================== 音量 / 画质 / 模式 ====================
+    private void updateVolumeFromMouse(int mx) {
+        if (!hasSelectedPlayer()) return;
+        float f = Math.max(0f, Math.min(1f, (float) (mx - volSliderX) / volSliderW));
+        int v = Math.round(f * 300);
+        PlaybackState pb = getSelectedPlayer().playbackState();
+        VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(), pb.status(), pb.mode(), pb.currentIndex(), v);
+        ClientVideoPlaybackManager.setGlobalVolume(v / 100f);
+    }
+
+    private int[] getVideoRes() {
+        int ci = getSelectedPlayer().playbackState().currentIndex();
+        if (ci >= 0 && ci < getSelectedPlayer().playlist().size()) {
+            var src = getSelectedPlayer().playlist().get(ci);
+            if (src.originalWidth() > 0) return new int[]{src.originalWidth(), src.originalHeight()};
+        }
+        return new int[]{1280, 720};
+    }
+
+    private void prevQuality() {
+        int[] r = getVideoRes(); String[] o = ClientVideoPlaybackManager.getQualityOptions(Math.max(r[0], r[1]));
+        if (o.length == 0) return;
+        int cur = ClientVideoPlaybackManager.getQualityIndex(), ci = 0;
+        for (int i = 0; i < o.length; i++) if (o[i].equals(ClientVideoPlaybackManager.QUALITY_LABELS[cur])) { ci = i; break; }
+        setQualityByLabel(o[(ci - 1 + o.length) % o.length]);
+    }
+
+    private void nextQuality() {
+        int[] r = getVideoRes(); String[] o = ClientVideoPlaybackManager.getQualityOptions(Math.max(r[0], r[1]));
+        if (o.length == 0) return;
+        int cur = ClientVideoPlaybackManager.getQualityIndex(), ci = 0;
+        for (int i = 0; i < o.length; i++) if (o[i].equals(ClientVideoPlaybackManager.QUALITY_LABELS[cur])) { ci = i; break; }
+        setQualityByLabel(o[(ci + 1) % o.length]);
+    }
+
+    private void setQualityByLabel(String label) {
+        for (int i = 0; i < ClientVideoPlaybackManager.QUALITY_LABELS.length; i++)
+            if (ClientVideoPlaybackManager.QUALITY_LABELS[i].equals(label))
+            { ClientVideoPlaybackManager.setQualityByIndex(i); return; }
+    }
+
+    private void cyclePlaybackMode() {
+        if (!hasSelectedPlayer()) return;
+        PlaybackState pb = getSelectedPlayer().playbackState();
+        PlaybackMode[] m = PlaybackMode.values();
+        VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(), pb.status(),
+                m[(pb.mode().ordinal() + 1) % m.length], pb.currentIndex(), pb.volume());
+    }
+
+    // ==================== 播放控制 ====================
+    private void playPrev() { changeTrack(-1); }
+    private void playNext() { changeTrack(1); }
+    private void changeTrack(int d) {
+        if (!hasSelectedPlayer()) return;
+        PlaybackState pb = getSelectedPlayer().playbackState();
+        int tot = getSelectedPlayer().playlist().size(); if (tot == 0) return;
+        int idx = (pb.currentIndex() + d + tot) % tot;
+        VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(), PlaybackStatus.PLAYING, pb.mode(), idx, pb.volume());
+    }
+    private void togglePlayPause() {
+        if (!hasSelectedPlayer()) return;
+        PlaybackState pb = getSelectedPlayer().playbackState();
+        PlaybackStatus ns = pb.status() == PlaybackStatus.PLAYING ? PlaybackStatus.PAUSED : PlaybackStatus.PLAYING;
+        VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(), ns, pb.mode(), pb.currentIndex(), pb.volume());
+        if (ns == PlaybackStatus.PAUSED) ClientVideoPlaybackManager.stopLocal(getSelectedPlayer().id());
+        else VideoPlayerClientNetworking.seekPlayback(getSelectedPlayer().id(), seekBar.currentSecs);
+    }
+    private void stopPlayback() {
+        if (!hasSelectedPlayer()) return;
+        PlaybackState pb = getSelectedPlayer().playbackState();
+        VideoPlayerClientNetworking.updatePlayback(getSelectedPlayer().id(), PlaybackStatus.STOPPED, pb.mode(), pb.currentIndex(), pb.volume());
+        ClientVideoPlaybackManager.stopLocal(getSelectedPlayer().id()); seekBar.reset();
+    }
+    private void addVideo() {
+        String url = urlInput.getValue().trim();
+        if (!url.isEmpty() && hasSelectedPlayer()) {
+            // 使用原始分辨率（0, 0, 0 → 服务端自动检测）
+            VideoPlayerClientNetworking.addVideoToPlaylist(getSelectedPlayer().id(), url, 0, 0, 0);
+            urlInput.setValue("");
+        }
+    }
+    private void deleteSelectedVideo() {
+        if (hasSelectedPlayer() && selectedVideoIndex >= 0 && selectedVideoIndex < getSelectedPlayer().playlist().size()) {
+            VideoPlayerClientNetworking.removeVideoFromPlaylist(getSelectedPlayer().id(), selectedVideoIndex);
+            selectedVideoIndex = -1;
+        }
+    }
+    private void saveUV() {
+        if (!hasSelectedPlayer() || !hasSelectedScreen()) return;
+        UvTransform uv = uvEditor.buildUV();
+        System.out.printf("[UV Save] pid=%s sid=%s scaleU=%.3f scaleV=%.3f offsetU=%.3f offsetV=%.3f rot=%.1f flipU=%b flipV=%b%n",
+                getSelectedPlayer().id(), getSelectedScreen().id(),
+                uv.scaleU(), uv.scaleV(), uv.offsetU(), uv.offsetV(),
+                uv.rotationDegrees(), uv.flipU(), uv.flipV());
+        VideoPlayerClientNetworking.updateScreenUv(getSelectedPlayer().id(), getSelectedScreen().id(), uv, true);
+        uvEditor.markEdited();
+    }
+    private void createScreenFor(VideoPlayerData p) {
+        if (ClientScreenCreationManager.start(p.id(), p.name() + "-screen")) {
+            sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), null);
+            Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() ->
+                    sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
+        }
+    }
+
+    // ==================== 数据同步 ====================
     private void syncCache() {
-        long v = sashwind.mc.mod.ffcraft.client.state.ClientVideoPlayerCache.getVersion();
+        long v = ClientVideoPlayerCache.getVersion();
         if (v != lastSnapshotVersion) {
-            lastSnapshotVersion = v; cachedPlayers = new ArrayList<>(VideoPlayerClientNetworking.snapshot().players());
-            if (selectedPlayerIndex >= cachedPlayers.size()) selectedPlayerIndex = cachedPlayers.isEmpty() ? -1 : 0;
+            lastSnapshotVersion = v;
+            cachedPlayers = new ArrayList<>(VideoPlayerClientNetworking.snapshot().players());
+            if (LeftPanelHelper.selectedPlayerIndex >= cachedPlayers.size())
+                LeftPanelHelper.selectedPlayerIndex = cachedPlayers.isEmpty() ? -1 : 0;
+            if (LeftPanelHelper.selectedScreenIndex >= (hasSelectedPlayer() ? getSelectedPlayer().screens().size() : 0))
+                LeftPanelHelper.selectedScreenIndex = 0;
         }
     }
 
-    private int getVideoPreviewTexture() {
-        return sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager.getPreviewTextureId();
+    // ==================== 渲染工具 ====================
+    private void renderSlider(GuiGraphicsExtractor g, int x, int y, int w, int h,
+                               float frac, String rLabel, boolean hover) {
+        int barH = 4, barY = y + h / 2 - barH / 2;
+        g.fill(x, barY, x + w, barY + barH, 0xFF222222);
+        g.fill(x, barY, x + w, barY + 1, 0xFF555555);
+        g.fill(x, barY, x + (int)(w * frac), barY + barH, 0xFF44AA44);
+        int tx = x + (int)(w * frac) - 4;
+        g.fill(tx, y + 1, tx + 8, y + h - 1, hover ? 0xFFFFFFFF : 0xFFCCCCCC);
+        g.fill(tx, y + 1, tx + 1, y + h - 1, 0xFF888888);
+        g.fill(tx + 7, y + 1, tx + 8, y + h - 1, 0xFF888888);
+        if (rLabel != null) g.text(this.font, rLabel, x + w + 6, y + 2, 0xFFAAAAAA);
     }
 
-    private void drawScreenUV(VideoScreenData s, UvTransform localUv, float frameX, float frameY, float frameW, float frameH,
-                              int fillColor, int edgeColor, int pointColor) {
-        List<Vector3d> vs = new ArrayList<>();
-        List<Double> dists = new ArrayList<>();
-        for (var v : s.vertices()) { vs.add(v.toVector()); dists.add(v.pitch()); dists.add(v.yaw()); }
+    private void drawUniBtn(GuiGraphicsExtractor g, int x, int y, int w, int h, String t, int mx, int my) {
+        boolean hov = mx >= x && mx <= x + w && my >= y && my <= y + h;
+        g.fill(x, y, x + w, y + h, hov ? BTN_BG_HOV : BTN_BG);
+        g.fill(x, y, x + w, y + 1, BTN_BORDER);
+        g.fill(x, y + h - 1, x + w, y + h, BTN_BORDER);
+        g.fill(x, y, x + 1, y + h, BTN_BORDER);
+        g.fill(x + w - 1, y, x + w, y + h, BTN_BORDER);
+        String s = shorten(t, (w - 8) / 7 + 1);
+        g.text(this.font, s, x + (w - this.font.width(s)) / 2, y + (h - 9) / 2 + 1, hov ? BTN_TEXT_HOV : BTN_TEXT);
+    }
 
-        var ut = localUv != null ? localUv : s.uvTransform();
-        float su = (float) ut.scaleU(), sv = (float) ut.scaleV();
-        float ou = (float) ut.offsetU(), ov = (float) ut.offsetV();
-        float rot = (float) ut.rotationDegrees();
-        boolean flpu = ut.flipU(), flpv = ut.flipV();
+    private void drawGrid(GuiGraphicsExtractor g, int x, int y, int w, int h, int cell) {
+        for (int gx = x; gx < x + w; gx += cell) g.fill(gx, y, gx + 1, y + h, 0x18FFFFFF);
+        for (int gy = y; gy < y + h; gy += cell) g.fill(x, gy, x + w, gy + 1, 0x18FFFFFF);
+    }
 
-        float ca = (float) Math.cos(Math.toRadians(rot));
-        float sa = (float) Math.sin(Math.toRadians(rot));
+    private void drawRect(GuiGraphicsExtractor g, int x, int y, int w, int h, int c) {
+        g.fill(x, y, x + w, y + 1, c); g.fill(x, y + h - 1, x + w, y + h, c);
+        g.fill(x, y, x + 1, y + h, c); g.fill(x + w - 1, y, x + w, y + h, c);
+    }
 
-        List<double[]> stitched = sashwind.mc.mod.ffcraft.client.player.Three2Flat.getStitchedUVs(vs, dists);
+    private static boolean inRect(int mx, int my, int rx, int ry, int rw, int rh) {
+        return mx >= rx && mx <= rx + rw && my >= ry && my <= ry + rh;
+    }
 
-        for (int pi = 0; pi < stitched.size(); pi++) {
-            double[] uvs = stitched.get(pi);
-            int n = uvs.length / 2;
-            if (n < 3) continue;
+    private static boolean clickBtn(int mx, int my, int x, int y, int s) {
+        return mx >= x && mx <= x + s && my >= y && my <= y + s;
+    }
 
-            for (int i = 1; i < n - 1; i++) {
-                float u0 = (float) uvs[0], v0 = (float) uvs[1];
-                float ui = (float) uvs[i * 2], vi = (float) uvs[i * 2 + 1];
-                float uj = (float) uvs[(i + 1) * 2], vj = (float) uvs[(i + 1) * 2 + 1];
+    private static String shorten(String s, int max) {
+        if (s.length() <= max) return s; return s.substring(0, Math.max(1, max - 1)) + "…";
+    }
 
-                if (flpu) { u0 = 1 - u0; ui = 1 - ui; uj = 1 - uj; }
-                if (flpv) { v0 = 1 - v0; vi = 1 - vi; vj = 1 - vj; }
+    private static boolean ctrlDown() {
+        long w = Minecraft.getInstance().getWindow().handle();
+        return GLFW.glfwGetKey(w, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
+                || GLFW.glfwGetKey(w, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS;
+    }
 
-                float ru0 = (ca * (u0 - 0.5f) - sa * (v0 - 0.5f)) * su + ou + 0.5f;
-                float rv0 = (sa * (u0 - 0.5f) + ca * (v0 - 0.5f)) * sv + ov + 0.5f;
-                float rui = (ca * (ui - 0.5f) - sa * (vi - 0.5f)) * su + ou + 0.5f;
-                float rvi = (sa * (ui - 0.5f) + ca * (vi - 0.5f)) * sv + ov + 0.5f;
-                float ruj = (ca * (uj - 0.5f) - sa * (vj - 0.5f)) * su + ou + 0.5f;
-                float rvj = (sa * (uj - 0.5f) + ca * (vj - 0.5f)) * sv + ov + 0.5f;
-
-                float x0 = frameX + ru0 * frameW, y0 = frameY + rv0 * frameH;
-                float xi = frameX + rui * frameW, yi = frameY + rvi * frameH;
-                float xj = frameX + ruj * frameW, yj = frameY + rvj * frameH;
-
-                ImGui.getWindowDrawList().addTriangleFilled(x0, y0, xi, yi, xj, yj, fillColor);
-            }
-
-            for (int i = 0; i < n; i++) {
-                int j = (i + 1) % n;
-                float ui = (float) uvs[i * 2], vi = (float) uvs[i * 2 + 1];
-                float uj = (float) uvs[j * 2], vj = (float) uvs[j * 2 + 1];
-
-                if (flpu) { ui = 1 - ui; uj = 1 - uj; }
-                if (flpv) { vi = 1 - vi; vj = 1 - vj; }
-
-                float rui = (ca * (ui - 0.5f) - sa * (vi - 0.5f)) * su + ou + 0.5f;
-                float rvi = (sa * (ui - 0.5f) + ca * (vi - 0.5f)) * sv + ov + 0.5f;
-                float ruj = (ca * (uj - 0.5f) - sa * (vj - 0.5f)) * su + ou + 0.5f;
-                float rvj = (sa * (uj - 0.5f) + ca * (vj - 0.5f)) * sv + ov + 0.5f;
-
-                float xi = frameX + rui * frameW, yi = frameY + rvi * frameH;
-                float xj = frameX + ruj * frameW, yj = frameY + rvj * frameH;
-
-                ImGui.getWindowDrawList().addLine(xi, yi, xj, yj, edgeColor, 2f);
-            }
-
-            for (int i = 0; i < n; i++) {
-                float ui = (float) uvs[i * 2], vi = (float) uvs[i * 2 + 1];
-
-                if (flpu) ui = 1 - ui;
-                if (flpv) vi = 1 - vi;
-
-                float rui = (ca * (ui - 0.5f) - sa * (vi - 0.5f)) * su + ou + 0.5f;
-                float rvi = (sa * (ui - 0.5f) + ca * (vi - 0.5f)) * sv + ov + 0.5f;
-
-                float vx = frameX + rui * frameW, vy = frameY + rvi * frameH;
-                ImGui.getWindowDrawList().addCircleFilled(vx, vy, 4.5f, pointColor, 12);
-            }
-        }
+    private static Button btn(String t, Button.OnPress a, int x, int y, int w, int h) {
+        return Button.builder(Component.literal(t), a).pos(x, y).size(w, h).build();
     }
 }
