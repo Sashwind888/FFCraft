@@ -18,7 +18,7 @@
 - **模组框架**：Fabric
 - **语言**：Java
 - **媒体引擎**：FFmpeg
-- **前置模组**：**ImGui** (必须安装)
+- **前置模组**：**[DrawLib](https://github.com/Sashwind888/DrawLib/releases)**
 
 ## 演示截图
 
@@ -32,12 +32,11 @@
 ### 普通玩家
 
 1. 确保已安装 **Fabric Loader** 和 **Fabric API**
-2. 安装前置模组 **ImGui**
-3. 安装前置模组 **[DrawLib](https://github.com/Sashwind888/DrawLib/releases)**
-4. 前往 [Releases 页面](https://github.com/Sashwind888/FFCraft/releases)
-5. 下载对应游戏版本的最新构建 `.jar` 文件
-6. 放入 Minecraft 的 `mods` 文件夹
-7. 启动游戏
+2. 安装前置模组 **[DrawLib](https://github.com/Sashwind888/DrawLib/releases)**
+3. 前往 [Releases 页面](https://github.com/Sashwind888/FFCraft/releases)
+4. 下载对应游戏版本的最新构建 `.jar` 文件
+5. 放入 Minecraft 的 `mods` 文件夹
+6. 启动游戏
 
 ### 开发者
 
@@ -90,6 +89,8 @@ cd FFCraft
 本项目采用 **AGPLv3** 许可证。您可以自由使用、修改和分发，但修改后的项目也必须以相同许可证开源。详情请查看 [LICENSE](LICENSE) 文件。
 
 ---
+
+**当前为26.2分支，已切换回原版GUI，无需安装ImGui**
 
 *希望这个项目可以帮到你喵~ --sashwind*
 *插件版：[github](https://github.com/Sashwind888/FFCraftPlg)*
