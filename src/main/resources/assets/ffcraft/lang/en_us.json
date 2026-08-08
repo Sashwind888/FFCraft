@@ -1,0 +1,69 @@
+{
+  "key.category.ffcraft.custom_category": "FFCraft",
+  "key.ffcraft.opengui": "Open Menu",
+
+  "key.screens.mainscreen.title": "FFCraft Control Panel",
+  "key.screens.mainscreen.tab.playback": "Playback",
+  "key.screens.mainscreen.tab.playlist": "Playlist",
+  "key.screens.mainscreen.tab.screen": "Screen",
+
+  "key.screens.mainscreen.placeholder.url": "Video URL...",
+  "key.screens.mainscreen.placeholder.rename": "Rename",
+  "key.screens.mainscreen.placeholder.value": "Value",
+
+  "key.screens.mainscreen.button.create_player": "+ New Player",
+  "key.screens.mainscreen.button.delete_player": "× Delete Player",
+  "key.screens.mainscreen.button.add_video": "+ Add",
+  "key.screens.mainscreen.button.remove_video": "× Remove",
+  "key.screens.mainscreen.button.save_uv": "Save UV",
+  "key.screens.mainscreen.button.new_screen": "+ New Screen",
+  "key.screens.mainscreen.button.delete_screen": "× Delete Screen",
+
+  "key.screens.mainscreen.empty.no_player": "No player, create one first",
+  "key.screens.mainscreen.empty.no_video": "No video",
+  "key.screens.mainscreen.empty.playlist": "(Playlist is empty)",
+  "key.screens.mainscreen.empty.no_screen": "(No screen, create one first)",
+  "key.screens.mainscreen.empty.panel": "(None)",
+
+  "key.screens.mainscreen.label.video_preview": "▶ Video Preview",
+  "key.screens.mainscreen.label.wait_video": "Waiting for video...",
+  "key.screens.mainscreen.label.vertices": "Vertices",
+  "key.screens.mainscreen.label.current": "Current",
+  "key.screens.mainscreen.label.playlist_current": "Current: %d/%d  |  %s",
+
+  "key.screens.mainscreen.status.playing": "▶ Playing",
+  "key.screens.mainscreen.status.paused": "⏸ Paused",
+  "key.screens.mainscreen.status.stopped": "■ Stopped",
+
+  "key.screens.mainscreen.mode.sequential": "Sequential",
+  "key.screens.mainscreen.mode.loop_list": "Loop List",
+  "key.screens.mainscreen.mode.single_loop": "Single Loop",
+  "key.screens.mainscreen.mode.random": "Random",
+
+  "key.screens.mainscreen.quality.original": "Original",
+
+  "key.screens.mainscreen.slider.rotation": "Rotation",
+  "key.screens.mainscreen.slider.scale": "Scale",
+  "key.screens.mainscreen.slider.offset_u": "Offset U",
+  "key.screens.mainscreen.slider.offset_v": "Offset V",
+
+  "key.screens.mainscreen.flip.horizontal": "Flip H",
+  "key.screens.mainscreen.flip.vertical": "Flip V",
+  "key.screens.mainscreen.channel.left": "Left Ch.",
+  "key.screens.mainscreen.channel.right": "Right Ch.",
+  "key.screens.mainscreen.label.flip": "Flip",
+  "key.screens.mainscreen.label.channel": "Channel",
+  "key.screens.mainscreen.label.horizontal": "Horizontal",
+  "key.screens.mainscreen.label.vertical": "Vertical",
+  "key.screens.mainscreen.label.left": "Left",
+  "key.screens.mainscreen.label.right": "Right",
+
+  "key.screens.mainscreen.panel.players": "▸ Player List",
+  "key.screens.mainscreen.panel.screens": "▸ Screen List",
+
+  "key.screens.mainscreen.area.scroll_title": "Scroll Area",
+  "key.screens.mainscreen.area.scroll_usage": "Use mouse wheel to scroll",
+
+  "key.hud.createplayer.line1": "Creating — LMB cancel, RMB place vertex, click start point to finish",
+  "key.hud.createplayer.vertices_count": "Vertices"
+}

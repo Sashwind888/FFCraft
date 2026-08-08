@@ -2,6 +2,7 @@ package sashwind.mc.mod.ffcraft.client.screens;
 
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.network.chat.Component;
 import org.joml.Vector3d;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
 import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager;
@@ -181,24 +182,24 @@ public class UVEditorHelper {
     public boolean mouseClicked(int mx, int my, VideoScreenData screen) {
         if (!isInUVArea(mx, my)) return false;
         float mu = getMU(mx), mv = getMV(my);
-        float cu = getCU(), cv = getCV();
         float hr = 10f / frameW;
-        float dist = (float) Math.sqrt(Math.pow(mu - cu, 2) + Math.pow(mv - cv, 2));
-        if (dist < hr) {
-            editingMode = "move"; editStartOffsetX = uvOffsetX; editStartOffsetY = uvOffsetY;
-            return true;
-        }
+
+        // 优先检测四角缩放手柄
         float[] b = computeBounds(screen);
         float[][] corners = {{b[0], b[2]}, {b[1], b[2]}, {b[0], b[3]}, {b[1], b[3]}};
         for (int i = 0; i < 4; i++) {
             if (Math.sqrt(Math.pow(mu - corners[i][0], 2) + Math.pow(mv - corners[i][1], 2)) < hr * 1.5f) {
                 editingMode = "scale"; editStartScale = uvScaleU; editStartScaleV = uvScaleV;
                 editStartOffsetX = uvOffsetX; editStartOffsetY = uvOffsetY; editCorner = i;
+                float cu = getCU(), cv = getCV();
                 editStartDist = (float) Math.sqrt(Math.pow(mu - cu, 2) + Math.pow(mv - cv, 2));
                 return true;
             }
         }
-        return false;
+
+        // 其余区域：左键拖动调整 UV 偏移
+        editingMode = "move"; editStartOffsetX = uvOffsetX; editStartOffsetY = uvOffsetY;
+        return true;
     }
 
     public void mouseDragged(int mx, int my) {
@@ -261,14 +262,17 @@ public class UVEditorHelper {
         return bounds;
     }
 
+    /** i18n helper */
+    private static String txt(String key) { return Component.translatable(key).getString(); }
+
     public void markEdited() { if (lastEditedScreenId != null) ClientVideoPlaybackManager.markUvManuallyEdited(lastEditedScreenId); }
 
     // ---- 翻转/声道 ----
 
     public boolean flipClick(int mx, int my, Font font, int baseX, int baseY) {
-        String prefix = "翻转: ";
-        String horz = uvFlipU ? "[✓] 水平" : "[ ] 水平";
-        String vert = uvFlipV ? "[✓] 垂直" : "[ ] 垂直";
+        String prefix = txt("key.screens.mainscreen.label.flip") + ": ";
+        String horz = (uvFlipU ? "[✓] " : "[ ] ") + txt("key.screens.mainscreen.label.horizontal");
+        String vert = (uvFlipV ? "[✓] " : "[ ] ") + txt("key.screens.mainscreen.label.vertical");
         int xU = baseX + font.width(prefix);
         int xV = xU + font.width(horz + "  ");
         if (mx >= xU && mx <= xU + font.width(horz) && my >= baseY && my <= baseY + 12) { uvFlipU = !uvFlipU; markEdited(); return true; }
@@ -279,9 +283,9 @@ public class UVEditorHelper {
     public boolean channelClick(int mx, int my, Font font, int baseX, int baseY,
                                  VideoPlayerData player, VideoScreenData screen) {
         ScreenChannelState ch = screen.channelState();
-        String prefix = "声道: ";
-        String left  = ch.leftEnabled()  ? "[✓] 左" : "[ ] 左";
-        String right = ch.rightEnabled() ? "[✓] 右" : "[ ] 右";
+        String prefix = txt("key.screens.mainscreen.label.channel") + ": ";
+        String left  = (ch.leftEnabled()  ? "[✓] " : "[ ] ") + txt("key.screens.mainscreen.label.left");
+        String right = (ch.rightEnabled() ? "[✓] " : "[ ] ") + txt("key.screens.mainscreen.label.right");
         int xL = baseX + font.width(prefix);
         int xR = xL + font.width(left + "  ");
         if (mx >= xL && mx <= xL + font.width(left) && my >= baseY && my <= baseY + 12) {

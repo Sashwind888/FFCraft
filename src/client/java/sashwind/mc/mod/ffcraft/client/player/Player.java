@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
@@ -129,6 +130,15 @@ public class Player {
         if (isSetVertices != null) {
             Player currentPlayer = isSetVertices;
             wd.clearVertices();
+
+            // 顶点数不足 3 → 左键取消创建，不提交
+            if (currentPlayer.verticesCount < 3) {
+                ClientScreenCreationManager.cancel();
+                isSetVertices = null;
+                currentPlayer.callback.run();
+                return false;
+            }
+
             currentPlayer.callback.run();
 
             ScreenCreationSession session = ClientScreenCreationManager.finish();
@@ -209,8 +219,8 @@ public class Player {
     public static void HUDrender(GuiGraphicsExtractor graphics, DeltaTracker tickCounter) {
         net.minecraft.client.gui.Font font = Minecraft.getInstance().font;
         if (isSetVertices != null) {
-            graphics.text(font, "开始创建，右键放置点，点击起始点结束", 10, 10, 0xffffffff);
-            graphics.text(font, "当前点数：" + isSetVertices.verticesCount + " / 64", 10, 20, 0xffffffff);
+            graphics.text(font, Component.translatable("key.hud.createplayer.line1").getString(), 10, 10, 0xffffffff);
+            graphics.text(font, Component.translatable("key.hud.createplayer.vertices_count").getString() + isSetVertices.verticesCount + " / 64", 10, 20, 0xffffffff);
         }
     }
 }

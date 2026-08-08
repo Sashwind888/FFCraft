@@ -74,6 +74,7 @@ public class MainScreen extends Screen {
     private String sliderEditMode;
     private boolean panningUV;
     private int dragLockedScroll; // UV 拖动时锁定的滚动偏移，防止抽搐
+    private boolean renameInputInitialized; // 防止 syncRenameInput 每帧覆盖用户输入
 
     // ==================== 内部 Widget：放在 Area 里渲染 ====================
     private class TabContentWidget extends net.minecraft.client.gui.components.AbstractWidget {
@@ -124,6 +125,10 @@ public class MainScreen extends Screen {
         return rightPaneArea != null ? screenY + rightPaneArea.getScrollOffset() : screenY;
     }
 
+    /** i18n 辅助：根据翻译键获取当前语言文本 */
+    private static String txt(String key) { return Component.translatable(key).getString(); }
+    private String tx(String key) { return txt(key); }
+
     // ==================== 生命周期 ====================
     @Override
     protected void init() {
@@ -133,30 +138,31 @@ public class MainScreen extends Screen {
         int rp = rightPaneX, cw = rightPaneW;
 
         // Tab 按钮
-        addRenderableWidget(btn("播放控制", b -> { activeTab = 0; rebuildTabContent(); }, rp, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
-        addRenderableWidget(btn("播放列表", b -> { activeTab = 1; rebuildTabContent(); }, rp + TAB_BUTTON_W + 2, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
-        addRenderableWidget(btn("屏幕设置", b -> { activeTab = 2; rebuildTabContent(); }, rp + TAB_BUTTON_W * 2 + 4, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
+        String TK = "key.screens.mainscreen.tab.";
+        addRenderableWidget(btn(tx(TK + "playback"), b -> { activeTab = 0; rebuildTabContent(); }, rp, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
+        addRenderableWidget(btn(tx(TK + "playlist"), b -> { activeTab = 1; rebuildTabContent(); }, rp + TAB_BUTTON_W + 2, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
+        addRenderableWidget(btn(tx(TK + "screen"), b -> { activeTab = 2; rebuildTabContent(); }, rp + TAB_BUTTON_W * 2 + 4, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
 
         // URL 输入（放在添加按钮左边）
         int urlBY = this.height - 28;
-        urlInput = new EditBox(this.font, rp, urlBY, cw - 160, 20, Component.literal("视频URL..."));
+        urlInput = new EditBox(this.font, rp, urlBY, cw - 160, 20, Component.translatable("key.screens.mainscreen.placeholder.url"));
         urlInput.setMaxLength(2048);
         addRenderableWidget(urlInput);
 
-        renameInput = new EditBox(this.font, 0, 0, 100, 16, Component.literal("重命名"));
+        renameInput = new EditBox(this.font, 0, 0, 100, 16, Component.translatable("key.screens.mainscreen.placeholder.rename"));
         renameInput.setMaxLength(64); renameInput.visible = false;
         addRenderableWidget(renameInput);
 
-        valueEditBox = new EditBox(this.font, 0, 0, 80, 16, Component.literal("数值"));
+        valueEditBox = new EditBox(this.font, 0, 0, 80, 16, Component.translatable("key.screens.mainscreen.placeholder.value"));
         valueEditBox.setMaxLength(10); valueEditBox.visible = false;
         addRenderableWidget(valueEditBox);
 
         // 左侧面板按钮
         int lbY = this.height - 55;
-        addRenderableWidget(btn("+ 新建播放器", b -> {
+        addRenderableWidget(btn(tx("key.screens.mainscreen.button.create_player"), b -> {
             VideoPlayerClientNetworking.createPlayer(new CreatePlayerRequest("Player" + localPlayerCounter++, false));
         }, LeftPanelHelper.PANE_X, lbY, LeftPanelHelper.PANE_W, 20));
-        addRenderableWidget(btn("× 删除播放器", b -> {
+        addRenderableWidget(btn(tx("key.screens.mainscreen.button.delete_player"), b -> {
             if (hasSelectedPlayer()) {
                 VideoPlayerClientNetworking.deletePlayer(getSelectedPlayer().id());
                 LeftPanelHelper.selectedPlayerIndex = -1; LeftPanelHelper.selectedScreenIndex = -1;
@@ -164,8 +170,8 @@ public class MainScreen extends Screen {
         }, LeftPanelHelper.PANE_X, lbY + 22, LeftPanelHelper.PANE_W, 20));
 
         // 播放列表操作按钮
-        addRenderableWidget(btn("+ 添加", b -> addVideo(), rp + cw - 152, urlBY, 72, 20));
-        addRenderableWidget(btn("× 删除", b -> deleteSelectedVideo(), rp + cw - 76, urlBY, 72, 20));
+        addRenderableWidget(btn(tx("key.screens.mainscreen.button.add_video"), b -> addVideo(), rp + cw - 152, urlBY, 72, 20));
+        addRenderableWidget(btn(tx("key.screens.mainscreen.button.remove_video"), b -> deleteSelectedVideo(), rp + cw - 76, urlBY, 72, 20));
 
         // 屏幕操作按钮 → 改为在 renderScreenTab 中手动绘制，随内容滚动
 
@@ -208,7 +214,7 @@ public class MainScreen extends Screen {
     }
 
     private int calcScreenTabH(VideoPlayerData p, int pw) {
-        int uvH = Math.min(pw * 9 / 16, 120);
+        int uvH = Math.max(100, Math.min(pw * 9 / 16, 200));
         int h = 4 + ENTRY_H * 2 + 4 + uvH + 8 + (SLIDER_H + 4) * 4 + 8 + 20 + 20 + 8 + 22;
         if (p.screens().size() > 1) h += ENTRY_H + 6;
         return h;
@@ -231,7 +237,7 @@ public class MainScreen extends Screen {
         // 标题栏
         graphics.fill(0, 0, this.width, HEADER_H, 0xDD1A1A2E);
         graphics.fill(0, HEADER_H - 1, this.width, HEADER_H, 0xFF444466);
-        String hdr = "FFCraft 控制面板";
+        String hdr = tx("key.screens.mainscreen.title");
         graphics.text(this.font, hdr, (this.width - this.font.width(hdr)) / 2, 5, 0xFFFFFFFF);
         int closeX = this.width - 20, closeY = 4;
         boolean hov = mouseX >= closeX && mouseX <= closeX + 16 && mouseY >= closeY && mouseY <= closeY + 16;
@@ -249,7 +255,7 @@ public class MainScreen extends Screen {
 
         // 空状态提示
         if (cachedPlayers.isEmpty()) {
-            graphics.text(this.font, "暂无播放器，请先创建", rightPaneX + 4, rightPaneY + 4, 0xFF888888);
+            graphics.text(this.font, tx("key.screens.mainscreen.empty.no_player"), rightPaneX + 4, rightPaneY + 4, 0xFF888888);
         }
 
         updateWidgetVisibility();
@@ -267,7 +273,7 @@ public class MainScreen extends Screen {
         int texId = ClientVideoPlaybackManager.getPreviewTextureId();
         graphics.fill(px, curY, px + pw, curY + prevH, texId != 0 ? 0xFF1A2A1A : 0xFF0A0A0A);
         if (texId == 0) drawGrid(graphics, px, curY, pw, prevH, 24);
-        String pl = texId != 0 ? "▶ 视频预览" : "等待视频...";
+        String pl = texId != 0 ? tx("key.screens.mainscreen.label.video_preview") : tx("key.screens.mainscreen.label.wait_video");
         graphics.text(this.font, pl, (int)(px + (pw - this.font.width(pl)) / 2f),
                 (int)(curY + prevH / 2f - 6), texId != 0 ? 0xFF55FF55 : 0xFF666666);
         drawRect(graphics, px, curY, pw, prevH, 0xFF555555);
@@ -281,7 +287,9 @@ public class MainScreen extends Screen {
 
         // 状态文本
         String status = switch (pb.status()) {
-            case PLAYING -> "▶ 播放中"; case PAUSED -> "⏸ 已暂停"; case STOPPED -> "■ 已停止";
+            case PLAYING -> tx("key.screens.mainscreen.status.playing");
+            case PAUSED -> tx("key.screens.mainscreen.status.paused");
+            case STOPPED -> tx("key.screens.mainscreen.status.stopped");
         };
         graphics.text(this.font, status, px + 2, curY, 0xFFAAAAAA);
         curY += ENTRY_H + 6;
@@ -323,12 +331,14 @@ public class MainScreen extends Screen {
         modeBtnY = curY;    modeBtnX = rowX;
 
         String modeLabel = switch (pb.mode()) {
-            case SEQUENTIAL -> "顺序"; case LOOP_LIST -> "列表循环";
-            case SINGLE_LOOP -> "单曲"; case RANDOM -> "随机";
+            case SEQUENTIAL -> tx("key.screens.mainscreen.mode.sequential");
+            case LOOP_LIST -> tx("key.screens.mainscreen.mode.loop_list");
+            case SINGLE_LOOP -> tx("key.screens.mainscreen.mode.single_loop");
+            case RANDOM -> tx("key.screens.mainscreen.mode.random");
         };
         drawUniBtn(graphics, modeBtnX, modeBtnY, modeBtnW, 20, modeLabel, mouseX, mouseY);
 
-        String qLabel = qOpts.length > curQi ? qOpts[curQi] : "原画";
+        String qLabel = qOpts.length > curQi ? qOpts[curQi] : tx("key.screens.mainscreen.quality.original");
         drawUniBtn(graphics, qualityBtnX, qualityBtnY, qualityBtnW, 20, qLabel, mouseX, mouseY);
         if (qOpts.length > 1) {
             drawUniBtn(graphics, qualityBtnX - 18, qualityBtnY, 18, 20, "◀", mouseX, mouseY);
@@ -344,7 +354,8 @@ public class MainScreen extends Screen {
         int ci = pb.currentIndex();
         int curY = py + 4; // 顶部留白
 
-        String curInfo = playlist.isEmpty() ? "无视频" : String.format("当前: %d/%d  |  %s",
+        String curInfo = playlist.isEmpty() ? tx("key.screens.mainscreen.empty.no_video")
+                : String.format(tx("key.screens.mainscreen.label.playlist_current"),
                 ci + 1, playlist.size(), ci >= 0 && ci < playlist.size() ? shorten(playlist.get(ci).url(), 40) : "-");
         graphics.text(this.font, curInfo, px + 2, curY, 0xFFAAAAAA);
         curY += ENTRY_H + 4;
@@ -355,7 +366,7 @@ public class MainScreen extends Screen {
         graphics.fill(px, curY, px + pw, curY + listH, 0xAA111111);
         graphics.fill(px, curY, px + pw, curY + 1, 0xFF555555);
         if (playlist.isEmpty()) {
-            graphics.text(this.font, "（播放列表为空）", px + 4, curY + 4, 0xFF888888);
+            graphics.text(this.font, tx("key.screens.mainscreen.empty.playlist"), px + 4, curY + 4, 0xFF888888);
         } else {
             int vis = listH / (ENTRY_H + 2);
             int maxScroll = Math.max(0, playlist.size() - vis);
@@ -378,7 +389,7 @@ public class MainScreen extends Screen {
                                   VideoPlayerData player, int px, int py, int pw) {
         List<VideoScreenData> screens = player.screens();
         if (screens.isEmpty()) {
-            graphics.text(this.font, "（暂无屏幕，请先创建）", px + 2, py, 0xFF888888);
+            graphics.text(this.font, tx("key.screens.mainscreen.empty.no_screen"), px + 2, py, 0xFF888888);
             return;
         }
         if (LeftPanelHelper.selectedScreenIndex < 0 || LeftPanelHelper.selectedScreenIndex >= screens.size())
@@ -388,7 +399,17 @@ public class MainScreen extends Screen {
 
         int curY = py + 4; // 顶部留白
         graphics.text(this.font, "◎ " + screen.name(), px + 2, curY, 0xFFCCCCFF);
-        graphics.text(this.font, screen.dimension().identifier() + "  ·  " + screen.vertices().size() + " 顶点",
+
+        // 坐标中心（顶点平均值）
+        String coordStr = "";
+        if (!screen.vertices().isEmpty()) {
+            double cx = 0, cy = 0, cz = 0;
+            for (var v : screen.vertices()) { cx += v.x(); cy += v.y(); cz += v.z(); }
+            int n = screen.vertices().size();
+            coordStr = String.format("  ·  (%.0f, %.0f, %.0f)", cx / n, cy / n, cz / n);
+        }
+        graphics.text(this.font, screen.dimension().identifier() + "  ·  " + screen.vertices().size()
+                        + "  " + tx("key.screens.mainscreen.label.vertices") + coordStr,
                 px + 2, curY + ENTRY_H, 0xFF888888);
         curY += ENTRY_H * 2 + 4;
 
@@ -405,7 +426,7 @@ public class MainScreen extends Screen {
         }
 
         // UV 预览（按视频宽高比）
-        int uvH = Math.min(pw * 9 / 16, Math.max(80, 100));
+        int uvH = Math.max(100, Math.min(pw * 9 / 16, 200));
         int ci = player.playbackState().currentIndex();
         float va = 16f / 9f;
         if (ci >= 0 && ci < player.playlist().size()) {
@@ -422,35 +443,35 @@ public class MainScreen extends Screen {
         scrSliderX = px + SLIDER_LABEL_W + 4;
         scrSliderW = Math.min(pw - SLIDER_LABEL_W - SLIDER_VAL_W - 12, 150);
 
-        curY = renderSliderRow(graphics, px, curY, "旋转",
+        curY = renderSliderRow(graphics, px, curY, tx("key.screens.mainscreen.slider.rotation"),
                 (uvEditor.rotationY + 180) / 360f, String.format("%.0f°", uvEditor.rotationY), 0, mouseX, mouseY);
-        curY = renderSliderRow(graphics, px, curY, "缩放",
+        curY = renderSliderRow(graphics, px, curY, tx("key.screens.mainscreen.slider.scale"),
                 (uvEditor.uvScaleU - 0.5f) / 1.5f,
                 String.format("%.0f%%", uvEditor.uvScaleU * 100), 1, mouseX, mouseY);
-        curY = renderSliderRow(graphics, px, curY, "偏移U",
+        curY = renderSliderRow(graphics, px, curY, tx("key.screens.mainscreen.slider.offset_u"),
                 (uvEditor.uvOffsetX + 500) / 1000f, String.format("%.0f", uvEditor.uvOffsetX), 2, mouseX, mouseY);
-        curY = renderSliderRow(graphics, px, curY, "偏移V",
+        curY = renderSliderRow(graphics, px, curY, tx("key.screens.mainscreen.slider.offset_v"),
                 (uvEditor.uvOffsetY + 500) / 1000f, String.format("%.0f", uvEditor.uvOffsetY), 3, mouseX, mouseY);
         curY += 8;
 
         // 翻转按钮
         scrFlipBtnY = curY;
-        drawUniBtn(graphics, px + 4, curY, 70, 16, uvEditor.uvFlipU ? "[✓] 水平翻转" : "水平翻转", mouseX, mouseY);
-        drawUniBtn(graphics, px + 78, curY, 70, 16, uvEditor.uvFlipV ? "[✓] 垂直翻转" : "垂直翻转", mouseX, mouseY);
+        drawUniBtn(graphics, px + 4, curY, 70, 16, (uvEditor.uvFlipU ? "[✓] " : "") + tx("key.screens.mainscreen.flip.horizontal"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 78, curY, 70, 16, (uvEditor.uvFlipV ? "[✓] " : "") + tx("key.screens.mainscreen.flip.vertical"), mouseX, mouseY);
         curY += 20;
 
         // 声道按钮
         scrChanBtnY = curY;
         ScreenChannelState ch = screen.channelState();
-        drawUniBtn(graphics, px + 4, curY, 54, 16, ch.leftEnabled() ? "[✓] 左声道" : "左声道", mouseX, mouseY);
-        drawUniBtn(graphics, px + 62, curY, 54, 16, ch.rightEnabled() ? "[✓] 右声道" : "右声道", mouseX, mouseY);
+        drawUniBtn(graphics, px + 4, curY, 54, 16, (ch.leftEnabled() ? "[✓] " : "") + tx("key.screens.mainscreen.channel.left"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 62, curY, 54, 16, (ch.rightEnabled() ? "[✓] " : "") + tx("key.screens.mainscreen.channel.right"), mouseX, mouseY);
         curY += 28;
 
         // 操作按钮（跟随内容滚动）
         scrSaveBtnY = curY;
-        drawUniBtn(graphics, px + 4, curY, 68, 20, "保存 UV", mouseX, mouseY);
-        drawUniBtn(graphics, px + 76, curY, 68, 20, "+ 新屏幕", mouseX, mouseY);
-        drawUniBtn(graphics, px + 148, curY, 68, 20, "× 删屏幕", mouseX, mouseY);
+        drawUniBtn(graphics, px + 4, curY, 68, 20, tx("key.screens.mainscreen.button.save_uv"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 76, curY, 68, 20, tx("key.screens.mainscreen.button.new_screen"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 148, curY, 68, 20, tx("key.screens.mainscreen.button.delete_screen"), mouseX, mouseY);
     }
 
     private int renderSliderRow(GuiGraphicsExtractor g, int px, int y, String label,
@@ -472,9 +493,20 @@ public class MainScreen extends Screen {
         // 关闭按钮
         if (mx >= this.width - 20 && mx <= this.width - 4 && my >= 4 && my <= 20) { this.onClose(); return true; }
 
-        // 左侧面板
-        if (doubleClick && leftPanel.mouseDoubleClicked(mx, my, cachedPlayers)) return true;
-        if (leftPanel.mouseClicked(mx, my, cachedPlayers)) return true;
+        // 重命名输入框可见时，点击在其范围内 → 交由 EditBox 处理，不触发左侧面板
+        boolean renameActive = leftPanel.isRenameInputVisible() && renameInput.isVisible();
+        int renameX = renameActive ? renameInput.getX() : -1;
+        int renameY = renameActive ? renameInput.getY() : -1;
+        int renameW = renameActive ? renameInput.getWidth() : 0;
+        int renameH = renameActive ? renameInput.getHeight() : 0;
+        boolean clickOnRename = renameActive && mx >= renameX && mx <= renameX + renameW
+                && my >= renameY && my <= renameY + renameH;
+
+        // 左侧面板（重命名编辑框激活时跳过，避免点击编辑框触发列表取消重命名）
+        if (!clickOnRename) {
+            if (doubleClick && leftPanel.mouseDoubleClicked(mx, my, cachedPlayers)) return true;
+            if (leftPanel.mouseClicked(mx, my, cachedPlayers)) return true;
+        }
 
         // Area 滚动条处理
         if (rightPaneArea != null && rightPaneArea.mouseClicked(event, doubleClick)) return true;
@@ -634,7 +666,7 @@ public class MainScreen extends Screen {
         if (k == GLFW.GLFW_KEY_ESCAPE && valueEditBox.isVisible()) { cancelSliderEdit(); return true; }
         if (k == GLFW.GLFW_KEY_ENTER && leftPanel.isRenameInputVisible()) { confirmRename(); return true; }
         if (k == GLFW.GLFW_KEY_ESCAPE && leftPanel.isRenameInputVisible())
-        { leftPanel.cancelRename(); renameInput.visible = false; return true; }
+        { leftPanel.cancelRename(); renameInput.visible = false; renameInputInitialized = false; return true; }
         if (k == GLFW.GLFW_KEY_SPACE && activeTab == 0 && hasSelectedPlayer()
                 && !valueEditBox.isVisible() && !renameInput.isVisible()) { togglePlayPause(); return true; }
         if (k == GLFW.GLFW_KEY_S && ctrlDown() && activeTab == 2 && hasSelectedPlayer() && hasSelectedScreen())
@@ -658,20 +690,24 @@ public class MainScreen extends Screen {
     // ==================== Widget 可见性 ====================
     private void updateWidgetVisibility() {
         boolean hp = hasSelectedPlayer();
+        String addLabel = tx("key.screens.mainscreen.button.add_video");
+        String removeLabel = tx("key.screens.mainscreen.button.remove_video");
         for (var c : this.children()) {
             if (!(c instanceof net.minecraft.client.gui.components.AbstractWidget w)) continue;
             if (c == renameInput || c == valueEditBox) continue;
             String l = w.getMessage().getString();
             if (isAlwaysVisible(l)) continue;
             if (c == urlInput) { w.visible = activeTab == 1 && hp; continue; }
-            if ("+ 添加".equals(l) || "× 删除".equals(l)) { w.visible = activeTab == 1 && hp; continue; }
-            // 屏幕操作按钮已改为手动绘制，跟随滚动
+            if (addLabel.equals(l) || removeLabel.equals(l)) { w.visible = activeTab == 1 && hp; continue; }
         }
     }
 
-    private static boolean isAlwaysVisible(String l) {
-        return "播放控制".equals(l) || "播放列表".equals(l) || "屏幕设置".equals(l)
-                || "+ 新建播放器".equals(l) || "× 删除播放器".equals(l);
+    private boolean isAlwaysVisible(String l) {
+        return l.equals(tx("key.screens.mainscreen.tab.playback"))
+                || l.equals(tx("key.screens.mainscreen.tab.playlist"))
+                || l.equals(tx("key.screens.mainscreen.tab.screen"))
+                || l.equals(tx("key.screens.mainscreen.button.create_player"))
+                || l.equals(tx("key.screens.mainscreen.button.delete_player"));
     }
 
     // ==================== 重命名 ====================
@@ -682,10 +718,16 @@ public class MainScreen extends Screen {
             renameInput.setY(leftPanel.getRenameInputY(cachedPlayers));
             renameInput.setWidth(leftPanel.getRenameInputW());
             renameInput.setHeight(leftPanel.getRenameInputH());
-            if (!renameInput.getValue().equals(leftPanel.getRenameTarget()))
+            // 仅首次设置初始值，之后不再覆盖用户输入
+            if (!renameInputInitialized) {
                 renameInput.setValue(leftPanel.getRenameTarget());
+                renameInputInitialized = true;
+            }
             if (!renameInput.isFocused()) { setFocused(renameInput); renameInput.setFocused(true); }
-        } else { renameInput.visible = false; }
+        } else {
+            renameInput.visible = false;
+            renameInputInitialized = false;
+        }
     }
 
     private void confirmRename() {
@@ -697,6 +739,7 @@ public class MainScreen extends Screen {
                     getSelectedPlayer().id(), UUID.fromString(r.substring(7)), renameInput.getValue().trim());
         }
         renameInput.visible = false;
+        renameInputInitialized = false;
     }
 
     // ==================== 滑块交互（屏幕设置） ====================

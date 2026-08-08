@@ -2,6 +2,7 @@ package sashwind.mc.mod.ffcraft.client.screens;
 
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.network.chat.Component;
 import sashwind.mc.mod.ffcraft.common.model.*;
 
 import java.util.*;
@@ -50,7 +51,7 @@ public class LeftPanelHelper {
         int curY = y;
 
         // ---- 播放器列表 ----
-        graphics.text(font, "▸ 播放器列表", x, curY, COLOR_HEADER);
+        graphics.text(font, txt("key.screens.mainscreen.panel.players"), x, curY, COLOR_HEADER);
         curY += ENTRY_H + 2;
         graphics.fill(x, curY, x + w, curY + 1, COLOR_BORDER);
         curY += 4;
@@ -62,7 +63,7 @@ public class LeftPanelHelper {
         graphics.fill(x - 1, curY - 1, x + w + 1, curY, COLOR_BORDER);
 
         if (players.isEmpty()) {
-            graphics.text(font, "（暂无）", x + 2, curY + 2, COLOR_TEXT_DIM);
+            graphics.text(font, txt("key.screens.mainscreen.empty.panel"), x + 2, curY + 2, COLOR_TEXT_DIM);
         } else {
             int vis = playerAreaH / (ENTRY_H + 2);
             int maxScroll = Math.max(0, players.size() - vis);
@@ -84,7 +85,7 @@ public class LeftPanelHelper {
         // ---- 屏幕列表 ----
         graphics.fill(x, curY, x + w, curY + 1, COLOR_BORDER);
         curY += 4;
-        graphics.text(font, "▸ 屏幕列表", x, curY, COLOR_HEADER);
+        graphics.text(font, txt("key.screens.mainscreen.panel.screens"), x, curY, COLOR_HEADER);
         curY += ENTRY_H + 2;
 
         // 动态高度：屏幕列表占剩余空间
@@ -96,7 +97,7 @@ public class LeftPanelHelper {
         List<VideoScreenData> screens = (selectedPlayerIndex >= 0 && selectedPlayerIndex < players.size())
                 ? players.get(selectedPlayerIndex).screens() : List.of();
         if (screens.isEmpty()) {
-            graphics.text(font, "（暂无）", x + 2, curY + 2, COLOR_TEXT_DIM);
+            graphics.text(font, txt("key.screens.mainscreen.empty.panel"), x + 2, curY + 2, COLOR_TEXT_DIM);
         } else {
             int vis = screenAreaH / (ENTRY_H + 2);
             int maxScroll = Math.max(0, screens.size() - vis);
@@ -209,7 +210,7 @@ public class LeftPanelHelper {
 
     /** 返回 "player:<uuid>" 或 "screen:<uuid>"，用于调用方发送重命名请求 */
     public String confirmRename(List<VideoPlayerData> players, String newName) {
-        String nm = newName.trim();
+        String nm = sanitizeName(newName);
         if (nm.isEmpty()) { cancelRename(); return null; }
         if (renamingPlayerIdx >= 0 && renamingPlayerIdx < players.size()) {
             var id = players.get(renamingPlayerIdx).id();
@@ -217,8 +218,9 @@ public class LeftPanelHelper {
             return "player:" + id;
         }
         if (renamingScreenId != null && selectedPlayerIndex >= 0 && selectedPlayerIndex < players.size()) {
+            var sid = renamingScreenId; // 先保存，cancelRename() 会清空
             cancelRename();
-            return "screen:" + renamingScreenId;
+            return "screen:" + sid;
         }
         cancelRename();
         return null;
@@ -230,5 +232,14 @@ public class LeftPanelHelper {
 
     private static int clampScroll(int scroll, int totalItems, int visibleCount) {
         return Math.max(0, Math.min(scroll, Math.max(0, totalItems - visibleCount)));
+    }
+
+    /** i18n helper */
+    private static String txt(String key) { return Component.translatable(key).getString(); }
+
+    /** 过滤特殊字符，只保留中文、字母、数字、横线和下划线 */
+    private static String sanitizeName(String name) {
+        if (name == null || name.isEmpty()) return "";
+        return name.trim().replaceAll("[^\\u4e00-\\u9fffA-Za-z0-9_\\-]", "");
     }
 }

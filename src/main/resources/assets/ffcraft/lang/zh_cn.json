@@ -2,11 +2,68 @@
   "key.category.ffcraft.custom_category": "FFCraft",
   "key.ffcraft.opengui": "打开菜单",
 
+  "key.screens.mainscreen.title": "FFCraft 控制面板",
+  "key.screens.mainscreen.tab.playback": "播放控制",
+  "key.screens.mainscreen.tab.playlist": "播放列表",
+  "key.screens.mainscreen.tab.screen": "屏幕设置",
 
-  "key.screens.mainscreen.title": "FFCraft 主菜单",
-  "key.screens.mainscreen.button.createplayer": "+",
-  "key.screens.mainscreen.button.deleteplayer": "-",
-  "key.hud.createplayer.line1": "现在开始创建播放器，最少三个点，点击起始点完成",
-  "key.button.yes": "是",
-  "key.button.no": "否"
+  "key.screens.mainscreen.placeholder.url": "视频URL...",
+  "key.screens.mainscreen.placeholder.rename": "重命名",
+  "key.screens.mainscreen.placeholder.value": "数值",
+
+  "key.screens.mainscreen.button.create_player": "+ 新建播放器",
+  "key.screens.mainscreen.button.delete_player": "× 删除播放器",
+  "key.screens.mainscreen.button.add_video": "+ 添加",
+  "key.screens.mainscreen.button.remove_video": "× 删除",
+  "key.screens.mainscreen.button.save_uv": "保存 UV",
+  "key.screens.mainscreen.button.new_screen": "+ 新屏幕",
+  "key.screens.mainscreen.button.delete_screen": "× 删屏幕",
+
+  "key.screens.mainscreen.empty.no_player": "暂无播放器，请先创建",
+  "key.screens.mainscreen.empty.no_video": "无视频",
+  "key.screens.mainscreen.empty.playlist": "（播放列表为空）",
+  "key.screens.mainscreen.empty.no_screen": "（暂无屏幕，请先创建）",
+  "key.screens.mainscreen.empty.panel": "（暂无）",
+
+  "key.screens.mainscreen.label.video_preview": "▶ 视频预览",
+  "key.screens.mainscreen.label.wait_video": "等待视频...",
+  "key.screens.mainscreen.label.vertices": "顶点",
+  "key.screens.mainscreen.label.current": "当前",
+  "key.screens.mainscreen.label.playlist_current": "当前: %d/%d  |  %s",
+
+  "key.screens.mainscreen.status.playing": "▶ 播放中",
+  "key.screens.mainscreen.status.paused": "⏸ 已暂停",
+  "key.screens.mainscreen.status.stopped": "■ 已停止",
+
+  "key.screens.mainscreen.mode.sequential": "顺序",
+  "key.screens.mainscreen.mode.loop_list": "列表循环",
+  "key.screens.mainscreen.mode.single_loop": "单曲",
+  "key.screens.mainscreen.mode.random": "随机",
+
+  "key.screens.mainscreen.quality.original": "原画",
+
+  "key.screens.mainscreen.slider.rotation": "旋转",
+  "key.screens.mainscreen.slider.scale": "缩放",
+  "key.screens.mainscreen.slider.offset_u": "偏移U",
+  "key.screens.mainscreen.slider.offset_v": "偏移V",
+
+  "key.screens.mainscreen.flip.horizontal": "水平翻转",
+  "key.screens.mainscreen.flip.vertical": "垂直翻转",
+  "key.screens.mainscreen.channel.left": "左声道",
+  "key.screens.mainscreen.channel.right": "右声道",
+  "key.screens.mainscreen.label.flip": "翻转",
+  "key.screens.mainscreen.label.channel": "声道",
+  "key.screens.mainscreen.label.horizontal": "水平",
+  "key.screens.mainscreen.label.vertical": "垂直",
+  "key.screens.mainscreen.label.left": "左",
+  "key.screens.mainscreen.label.right": "右",
+
+  "key.screens.mainscreen.panel.players": "▸ 播放器列表",
+  "key.screens.mainscreen.panel.screens": "▸ 屏幕列表",
+
+  "key.screens.mainscreen.area.scroll_title": "滚动区域",
+  "key.screens.mainscreen.area.scroll_usage": "使用鼠标滚轮滚动",
+
+  "key.hud.createplayer.line1": "开始创建，左键取消，右键放置点，点击起始点结束",
+  "key.hud.createplayer.vertices_count": "当前点数"
 }
