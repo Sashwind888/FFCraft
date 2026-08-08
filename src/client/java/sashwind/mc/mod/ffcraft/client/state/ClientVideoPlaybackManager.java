@@ -189,14 +189,6 @@ public class ClientVideoPlaybackManager {
 
     private static final Map<UUID, Long> playbackStartMs = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> playbackStartSecs = new ConcurrentHashMap<>();
-    private static int previewTexId = 0;
-    private static int previewTexW = 0, previewTexH = 0;
-    private static boolean previewTexDirty = false;
-    private static final Object previewTexLock = new Object();
-    private static byte[] previewPixels = null;
-
-    public static int getPreviewTextureId() { return previewTexId; }
-    public static boolean isPreviewReady() { return previewTexId != 0; }
     private static int lastIndex = -1;
     private static String lastUrl;
 
@@ -277,25 +269,25 @@ public class ClientVideoPlaybackManager {
                 }
             }
 
-            // video frames — audio-pacing: 音频为主时钟，每次限取N帧防止跳帧
+            // video frames — 每tick最多取3帧，避免批量丢弃导致卡顿
             StreamPuller sp = pullers.get(pid);
             if (sp != null) {
-                long samples = audioSampleCount.getOrDefault(pid, 0L);
-                double audioSecs = (double) samples / Math.max(1, sp.getAudioSampleRate());
                 long pushed = videoFrameSeq.getOrDefault(pid, 0L);
-                double fps = sp.getFrameRate();
-                double videoSecs = (double) pushed / Math.max(1, fps);
-                double threshold = 2.0 / Math.max(1, fps);
-
-                // 取帧直到追上音频或队列空（每帧都计入时钟，丢弃的也不遗漏）
                 NativeImage latest = null;
-                while (videoSecs <= audioSecs + threshold) {
+                int maxPerTick = 3;
+                for (int taken = 0; taken < maxPerTick; taken++) {
                     NativeImage f = sp.getFrame();
                     if (f == null) break;
                     if (latest != null) latest.close();
                     latest = f;
                     pushed++;
-                    videoSecs = (double) pushed / Math.max(1, fps);
+                }
+                // 如果队列还有积压帧，静默排空防止解码器阻塞
+                while (true) {
+                    NativeImage f = sp.getFrame();
+                    if (f == null) break;
+                    f.close();
+                    pushed++;
                 }
                 if (latest != null) {
                     audioOnlyPlayers.remove(pid);
@@ -447,71 +439,6 @@ public class ClientVideoPlaybackManager {
         }
     }
 
-    private static void cachePreviewFrame(NativeImage img) {
-        int w = img.getWidth(), h = img.getHeight();
-        synchronized (previewTexLock) {
-            byte[] rawBytes = new byte[w * h * 4];
-            long ptr = img.getPointer();
-            org.lwjgl.system.MemoryUtil.memByteBuffer(ptr, w * h * 4).get(rawBytes);
-            previewPixels = rawBytes;
-            previewTexW = w; previewTexH = h;
-            previewTexDirty = true;
-            System.out.println("[Preview] Cached frame " + w + "x" + h + ", bytes=" + rawBytes.length);
-        }
-    }
-
-    private static boolean loggedFirstUpload = false;
-    /** Call on render thread to upload preview texture to GL */
-    public static void uploadPreviewTexture() {
-        synchronized (previewTexLock) {
-            if (!previewTexDirty || previewPixels == null) return;
-            previewTexDirty = false;
-
-            if (!loggedFirstUpload) {
-                System.out.println("[Preview] Uploading texture " + previewTexW + "x" + previewTexH + " GLid=" + previewTexId);
-                loggedFirstUpload = true;
-            }
-
-            try {
-                if (previewTexId == 0) {
-                    previewTexId = org.lwjgl.opengl.GL11C.glGenTextures();
-                }
-                org.lwjgl.opengl.GL11C.glBindTexture(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, previewTexId);
-                org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
-                        org.lwjgl.opengl.GL11C.GL_TEXTURE_MIN_FILTER, org.lwjgl.opengl.GL11C.GL_LINEAR);
-                org.lwjgl.opengl.GL11C.glTexParameteri(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D,
-                        org.lwjgl.opengl.GL11C.GL_TEXTURE_MAG_FILTER, org.lwjgl.opengl.GL11C.GL_LINEAR);
-
-                // 视频帧可能很大（4K），MemoryStack 栈空间不够，用堆外内存
-                java.nio.ByteBuffer directBuf = org.lwjgl.system.MemoryUtil.memAlloc(previewPixels.length);
-                try {
-                    directBuf.put(previewPixels);
-                    directBuf.flip();
-                    org.lwjgl.opengl.GL11C.glTexImage2D(org.lwjgl.opengl.GL11C.GL_TEXTURE_2D, 0,
-                            org.lwjgl.opengl.GL11C.GL_RGBA, previewTexW, previewTexH, 0,
-                            org.lwjgl.opengl.GL11C.GL_RGBA, org.lwjgl.opengl.GL11C.GL_UNSIGNED_BYTE,
-                            directBuf);
-                } finally {
-                    org.lwjgl.system.MemoryUtil.memFree(directBuf);
-                }
-                System.out.println("[Preview] Upload successful, GLid=" + previewTexId);
-            } catch (Exception e) {
-                System.err.println("[Preview] Upload failed: " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-    }
-
-    /** 从选中播放器的视频流抓取一帧到预览纹理 */
-    public static void capturePreviewFrame(UUID playerId) {
-        StreamPuller sp = pullers.get(playerId);
-        if (sp == null) return;
-        NativeImage frame = sp.getFrame();
-        if (frame != null) {
-            try { cachePreviewFrame(frame); } finally { frame.close(); }
-        }
-    }
-
     public static void stopAll() {
         for (StreamPuller sp : pullers.values()) sp.stopPulling();
         pullers.clear();
@@ -525,18 +452,6 @@ public class ClientVideoPlaybackManager {
         uvManuallyEdited.clear();
         playbackStartMs.clear();
         playbackStartSecs.clear();
-        // 释放 OpenGL 预览纹理（glDeleteTextures 必须在渲染线程，stopAll 可能在 Netty 线程调用）
-        if (previewTexId != 0) {
-            final int texId = previewTexId;
-            previewTexId = 0;
-            previewTexW = 0;
-            previewTexH = 0;
-            previewTexDirty = false;
-            previewPixels = null;
-            loggedFirstUpload = false;
-            net.minecraft.client.Minecraft.getInstance().execute(() ->
-                org.lwjgl.opengl.GL11C.glDeleteTextures(texId));
-        }
         // 释放 NativeImage 占位图
         if (placeholderImage != null) {
             placeholderImage.close();
@@ -562,19 +477,6 @@ public class ClientVideoPlaybackManager {
         if (playerId.equals(lastPlayerId)) lastPlayerId = null;
         // 立即更新本地缓存（progress=0, status=STOPPED）
         ClientVideoPlayerCache.forceStop(playerId);
-    }
-
-    public static NativeImage getLatestFrame(UUID playerId) {
-        StreamPuller sp = pullers.get(playerId);
-        if (sp == null) return null;
-        NativeImage latest = null;
-        while (true) {
-            NativeImage f = sp.getFrame();
-            if (f == null) break;
-            if (latest != null) latest.close();
-            latest = f;
-        }
-        return latest;
     }
 
     /** 根据实际视频宽高比重新计算所有屏幕的 UV 变换 */

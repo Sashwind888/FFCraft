@@ -181,13 +181,9 @@ public class MainScreen extends Screen {
         rebuildTabContent();
     }
 
-    private int tickCounter;
     @Override
     public void tick() {
         super.tick();
-        if (++tickCounter % 4 == 0 && hasSelectedPlayer())
-            ClientVideoPlaybackManager.capturePreviewFrame(getSelectedPlayer().id());
-        ClientVideoPlaybackManager.uploadPreviewTexture();
     }
     @Override public void onClose() { cachedPlayers.clear(); lastSnapshotVersion = Long.MIN_VALUE; super.onClose(); }
     @Override public void removed() { super.removed(); }
@@ -268,14 +264,13 @@ public class MainScreen extends Screen {
         PlaybackState pb = player.playbackState();
         int curY = py;
 
-        // 视频预览
-        int prevH = pw * 9 / 16;
-        int texId = ClientVideoPlaybackManager.getPreviewTextureId();
-        graphics.fill(px, curY, px + pw, curY + prevH, texId != 0 ? 0xFF1A2A1A : 0xFF0A0A0A);
-        if (texId == 0) drawGrid(graphics, px, curY, pw, prevH, 24);
-        String pl = texId != 0 ? tx("key.screens.mainscreen.label.video_preview") : tx("key.screens.mainscreen.label.wait_video");
+        // 视频预览占位
+        int prevH = Math.max(80, pw * 9 / 16);
+        graphics.fill(px, curY, px + pw, curY + prevH, 0xFF0A0A0A);
+        drawGrid(graphics, px, curY, pw, prevH, 24);
+        String pl = tx("key.screens.mainscreen.label.wait_video");
         graphics.text(this.font, pl, (int)(px + (pw - this.font.width(pl)) / 2f),
-                (int)(curY + prevH / 2f - 6), texId != 0 ? 0xFF55FF55 : 0xFF666666);
+                (int)(curY + prevH / 2f - 6), 0xFF666666);
         drawRect(graphics, px, curY, pw, prevH, 0xFF555555);
         curY += prevH + 8;
 
