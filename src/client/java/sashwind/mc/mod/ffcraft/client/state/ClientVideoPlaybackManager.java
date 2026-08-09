@@ -192,6 +192,7 @@ public class ClientVideoPlaybackManager {
 
     private static int lastIndex = -1;
     private static String lastUrl;
+    private static sashwind.mc.mod.ffcraft.common.model.PlaybackMode lastMode;
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ClientVideoPlaybackManager::onTick);
@@ -248,8 +249,9 @@ public class ClientVideoPlaybackManager {
                 farPause = pauseByDistance.getOrDefault(pid, false); // 滞回区间内保持原状态
             }
 
-            // 创建新 MpvPlayer（URL/player 变更时）
-            if (!pid.equals(lastPlayerId) || idx != lastIndex || !url.equals(lastUrl) || !players.containsKey(pid)) {
+            // 创建新 MpvPlayer（URL/player/mode 变更时）
+            if (!pid.equals(lastPlayerId) || idx != lastIndex || !url.equals(lastUrl)
+                    || !pb.mode().equals(lastMode) || !players.containsKey(pid)) {
                 if (lastPlayerId != null) {
                     var old = players.remove(lastPlayerId);
                     if (old != null) old.stopPulling();
@@ -257,6 +259,8 @@ public class ClientVideoPlaybackManager {
                 try {
                     MpvPlayer mp = new MpvPlayer(url);
                     players.put(pid, mp);
+                    // 单曲循环：mpv 原生 loop-file 无缝循环（不重载不卡顿）；其他模式关闭
+                    mp.setLoopFile(pb.mode() == sashwind.mc.mod.ffcraft.common.model.PlaybackMode.SINGLE_LOOP);
                     // 空间音频：OpenAlAudioPlayer 从 mpv 的音频队列拉 PCM
                     // （旧版 libmpv 无音频渲染 API → mpv 系统直出，跳过）
                     audioPlayers.remove(pid);
@@ -270,6 +274,7 @@ public class ClientVideoPlaybackManager {
                     lastPlayerId = pid;
                     lastIndex = idx;
                     lastUrl = url;
+                    lastMode = pb.mode();
                     playbackStartMs.put(pid, System.currentTimeMillis());
                     playbackStartSecs.put(pid, pb.progressSeconds());
                     uvRecalculated.remove(pid);
@@ -292,6 +297,12 @@ public class ClientVideoPlaybackManager {
 
             // 处理 mpv 事件（属性变化等）
             mp.processEvents();
+            // 单曲循环（loop-file 无缝循环无事件）：检测到循环点 → 重置服务器进度，进度条归零
+            if (mp.consumeLoopDetected()) {
+                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                playbackStartMs.put(pid, System.currentTimeMillis());
+                playbackStartSecs.put(pid, 0);
+            }
             // 渲染待处理帧到 frameQueue（远距离暂停时跳过，省解码+渲染 CPU）
             if (!farPause) mp.pollAndRender();
 
@@ -364,23 +375,59 @@ public class ClientVideoPlaybackManager {
                 if (p.id().equals(pid) && p.playbackState().status() == PlaybackStatus.PLAYING)
                 { keep = true; break; }
             }
-            if (keep && !e.getValue().isRunning()) {
-                keep = false;
+            if (keep && e.getValue().isEndedCleanly()) {
+                // 播放正常结束 → 按模式处理：单曲重播（本地 reload，保留播放器）或切集（通知服务器，等广播后重建）
+                boolean singleLoopRestart = false;
                 for (var p : snap.players()) {
                     if (p.id().equals(pid)) {
                         var pb = p.playbackState();
-                        int ni = pb.currentIndex() + 1;
                         var pm = pb.mode();
-                        if (pm == sashwind.mc.mod.ffcraft.common.model.PlaybackMode.SINGLE_LOOP) ni = pb.currentIndex();
-                        else if (ni >= p.playlist().size()) ni = (pm == sashwind.mc.mod.ffcraft.common.model.PlaybackMode.LOOP_LIST) ? 0 : 0;
-                        sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updatePlayback(
-                                pid, PlaybackStatus.PLAYING, pm, ni, pb.volume());
-                        sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                        int size = p.playlist().size();
+                        switch (pm) {
+                            case SINGLE_LOOP -> {
+                                e.getValue().reload();
+                                // 同步服务器进度归零（协议不变：复用现有 seek 指令）
+                                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                                singleLoopRestart = true;
+                            }
+                            case LOOP_LIST -> {
+                                int ni = pb.currentIndex() + 1;
+                                if (ni >= size) ni = 0;
+                                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updatePlayback(
+                                        pid, PlaybackStatus.PLAYING, pm, ni, pb.volume());
+                                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                            }
+                            case SEQUENTIAL -> {
+                                int ni = pb.currentIndex() + 1;
+                                if (ni >= size) {
+                                    // 列表播完 → 停止
+                                    sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updatePlayback(
+                                            pid, PlaybackStatus.STOPPED, pm, pb.currentIndex(), pb.volume());
+                                } else {
+                                    sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updatePlayback(
+                                            pid, PlaybackStatus.PLAYING, pm, ni, pb.volume());
+                                    sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                                }
+                            }
+                            case RANDOM -> {
+                                int ni = pb.currentIndex();
+                                if (size > 1) {
+                                    do { ni = (int) (Math.random() * size); } while (ni == pb.currentIndex());
+                                }
+                                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updatePlayback(
+                                        pid, PlaybackStatus.PLAYING, pm, ni, pb.volume());
+                                sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.seekPlayback(pid, 0);
+                            }
+                        }
                         playbackStartMs.put(pid, System.currentTimeMillis());
                         playbackStartSecs.put(pid, 0);
                         break;
                     }
                 }
+                if (singleLoopRestart) {
+                    continue; // 单曲循环：播放器保留（reload 中），跳过下面的移除逻辑
+                }
+                keep = false; // 切集/停止：移除已结束的播放器，等服务器广播新快照后重建
             }
             boolean paused = false;
             for (var p : snap.players()) {
@@ -394,7 +441,7 @@ public class ClientVideoPlaybackManager {
                 players.remove(e.getKey());
                 playbackStartMs.remove(e.getKey());
                 playbackStartSecs.remove(e.getKey());
-                if (e.getKey().equals(lastPlayerId)) lastPlayerId = null;
+                if (e.getKey().equals(lastPlayerId)) { lastPlayerId = null; lastMode = null; }
             }
         }
     }
@@ -428,7 +475,7 @@ public class ClientVideoPlaybackManager {
         videoFrameSeq.remove(pid);
         playbackStartMs.remove(pid);
         playbackStartSecs.remove(pid);
-        if (pid.equals(lastPlayerId)) lastPlayerId = null;
+        if (pid.equals(lastPlayerId)) { lastPlayerId = null; lastMode = null; }
     }
 
     // ===== 空间音频 =====
@@ -493,6 +540,7 @@ public class ClientVideoPlaybackManager {
         stopByDistance.clear();
         pauseByDistance.clear();
         lastPlayerId = null;
+        lastMode = null;
     }
 
     public static void stopLocal(UUID playerId) {

@@ -147,8 +147,8 @@ public class MainScreen extends Screen {
         addRenderableWidget(btn(tx(TK + "playlist"), b -> { activeTab = 1; rebuildTabContent(); }, rp + TAB_BUTTON_W + 2, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
         addRenderableWidget(btn(tx(TK + "screen"), b -> { activeTab = 2; rebuildTabContent(); }, rp + TAB_BUTTON_W * 2 + 4, TAB_Y, TAB_BUTTON_W, TAB_BUTTON_H));
 
-        // URL 输入（放在添加按钮左边）
-        int urlBY = this.height - 28;
+        // URL 输入（放在添加按钮左边）—— 上移半个编辑框（10px），给下方播放列表让出空间
+        int urlBY = this.height - 38;
         urlInput = new EditBox(this.font, rp, urlBY, cw - 160, 20, Component.translatable("key.screens.mainscreen.placeholder.url"));
         urlInput.setMaxLength(2048);
         addRenderableWidget(urlInput);
@@ -493,7 +493,9 @@ public class MainScreen extends Screen {
         curY += ENTRY_H + 4;
 
         int availH = this.height - rightPaneY - 10;
-        int listH = availH - (ENTRY_H + 4) - 4 - 56; // 顶部留白 + 底部按钮区
+        // 列表向下扩展两个编辑框（40px）：原 56 预留给底部按钮区，但输入行已上移半个编辑框，
+        // 直接 +40 会与输入框重叠 12px，故按实际可用空间扩到与输入行保持 2px 空隙
+        int listH = availH - (ENTRY_H + 4) - 4 - 30;
         playlistX = px; playlistY = curY; playlistW = pw; playlistH = listH;
         graphics.fill(px, curY, px + pw, curY + listH, 0xAA111111);
         graphics.fill(px, curY, px + pw, curY + 1, 0xFF555555);

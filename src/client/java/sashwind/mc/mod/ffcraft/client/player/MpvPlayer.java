@@ -39,6 +39,16 @@ public class MpvPlayer {
     private final AtomicBoolean frameReady = new AtomicBoolean(false);
     private final AtomicBoolean hasVideo = new AtomicBoolean(false);
 
+    /** 播放已结束（END_FILE 后置位，reload/新建时清除）。endedError=0 表示正常播完 */
+    private volatile boolean ended;
+    private volatile int endedError;
+
+    /** 文件加载完成前发起的 seek 排队（loadfile 异步，立即 seek 会被 mpv 忽略 → 从头播） */
+    private double pendingSeek = Double.NaN;
+    /** 单曲循环检测：time-pos 从末尾跳回开头（loop-file 无缝循环无事件，只能轮询） */
+    private double lastTimePos = -1;
+    private volatile boolean loopDetected;
+
     // 渲染目标池（环形）：mpv 直接渲染进池目标后入队该目标（所有权转移给消费者，消费者负责 close），
     // 轮换时若已被消费者 close（isClosed()）则重建 → 省掉每帧一次全帧克隆拷贝
     private static final int TARGET_POOL_SIZE = 3;
@@ -97,6 +107,11 @@ public class MpvPlayer {
             // ③ 系数用 "|" 分隔，且必须显式给出（af=pan=2 无系数 → 全 0 → 静音）
             mpv().mpv_set_option_string(handle, "af", "lavfi=[pan=stereo|c0=1*c0|c1=1*c1]");
         }
+
+        // 单曲循环用 mpv 原生 loop-file=inf（无缝循环，不重新拉流 → 不卡主线程）。
+        // 不要用 loadfile replace 重播：mpv 核心持锁销毁+重建播放链（网络 ~2s），
+        // 主线程的 set_property/render 等 API 调用都会阻塞等锁 → 游戏卡顿
+        mpv().mpv_set_option_string(handle, "loop-file", "no");
 
         // mpv 日志落盘（必须 initialize 前设置）
         mpv().mpv_set_option_string(handle, "log-file", "mpv.log");
@@ -330,7 +345,56 @@ public class MpvPlayer {
     /** 跳转（秒） */
     public void seekTo(double seconds) {
         if (!running.get()) return;
+        if (videoW <= 0) {
+            // 文件未加载完成（loadfile 异步）→ 排队，FILE_LOADED 后执行；
+            // 立即 seek 会被 mpv 忽略（idle/加载中）→ 从 0 播，丢失播放位置
+            pendingSeek = seconds;
+            return;
+        }
         mpv().mpv_command_async(handle, 0, new String[]{"seek", String.valueOf(seconds), "absolute"});
+    }
+
+    /** 单曲循环检测：time-pos 从末尾跳回开头 → 置位循环标志（Manager 负责重置服务器进度） */
+    private void checkLoop() {
+        if (ended || duration <= 0) return; // 直播/未知时长不检测
+        double t = getPropDouble("time-pos");
+        if (t < 0) return; // NaN/不可用
+        if (lastTimePos >= 0 && lastTimePos > duration - 3 && t < 3) {
+            loopDetected = true;
+        }
+        lastTimePos = t;
+    }
+
+    /** 消费循环标志（单次有效，Manager 每 tick 调用） */
+    public boolean consumeLoopDetected() {
+        boolean d = loopDetected;
+        loopDetected = false;
+        return d;
+    }
+
+    /** 播放是否已结束（END_FILE 后置位，reload/新建时清除） */
+    public boolean isEnded() { return ended; }
+
+    /** 是否正常播完（error==0）。加载失败（error!=0）不自动重播，避免坏 url 死循环 */
+    public boolean isEndedCleanly() { return ended && endedError == 0; }
+
+    /** 自动重播：重新加载同一 url（SINGLE_LOOP 兜底，正常应走 loop-file 无缝循环）。
+     *  注意：loadfile replace 会让 mpv 核心持锁重建播放链（网络 ~2s），主线程 API 调用会阻塞，
+     *  仅作为 loop-file 不可用时的最后手段 */
+    public void reload() {
+        if (!running.get()) return;
+        ended = false;
+        System.out.println("[MpvPlayer] 自动重播: " + url);
+        mpv().mpv_command_async(handle, 0, new String[]{"loadfile", url, "replace"});
+    }
+
+    /**
+     * 设置单曲循环（mpv 原生无缝循环，播完自动 seek 0 重播，无 END_FILE/无重载/无卡顿）。
+     * mode 变化时由 Manager 调用；运行时属性可随时切换。
+     */
+    public void setLoopFile(boolean loop) {
+        if (!running.get()) return;
+        mpv().mpv_set_property_string(handle, "loop-file", loop ? "inf" : "no");
     }
 
     /** 设置音量 0.0-1.0 */
@@ -406,6 +470,7 @@ public class MpvPlayer {
 
     public void processEvents() {
         if (!running.get()) return;
+        checkLoop(); // 单曲循环检测（每 tick，不依赖渲染）
         while (true) {
             MpvNative.mpv_event event = mpv().mpv_wait_event(handle, 0); // 非阻塞
             int id = event.event_id;
@@ -413,11 +478,28 @@ public class MpvPlayer {
 
             switch (id) {
                 case MpvNative.MPV_EVENT_SHUTDOWN -> { running.set(false); }
-                case MpvNative.MPV_EVENT_FILE_LOADED ->
-                        System.out.println("[MpvPlayer] 文件加载完成: " + url);
-                case MpvNative.MPV_EVENT_END_FILE ->
-                        System.out.println("[MpvPlayer] 播放结束/失败: error=" + event.error
-                                + " (" + mpv().mpv_error_string(event.error) + ")");
+                case MpvNative.MPV_EVENT_FILE_LOADED -> {
+                    System.out.println("[MpvPlayer] 文件加载完成: " + url);
+                    // 执行加载期间排队的 seek（保留播放位置）。
+                    // clamp：SINGLE_LOOP 循环后服务器进度漂移（累计秒数可能远超时长）→ 取模到实际位置
+                    if (!Double.isNaN(pendingSeek)) {
+                        double s = pendingSeek;
+                        pendingSeek = Double.NaN;
+                        double dur = getPropDouble("duration");
+                        if (dur > 0 && s > dur) s = s % dur;
+                        mpv().mpv_command_async(handle, 0, new String[]{"seek", String.valueOf(s), "absolute"});
+                    }
+                }
+                case MpvNative.MPV_EVENT_END_FILE -> {
+                    System.out.println("[MpvPlayer] 播放结束/失败: error=" + event.error
+                            + " (" + mpv().mpv_error_string(event.error) + ")");
+                    // mpv 播完进入 idle：video-params 失效 → 清空尺寸，阻止继续渲染黑帧（fps 下降根源）
+                    // 注意：videoW/H 必须立即清零，等 Manager 按模式决定重播/切集
+                    videoW = 0;
+                    videoH = 0;
+                    ended = true;
+                    endedError = event.error;
+                }
                 case MpvNative.MPV_EVENT_COMMAND_REPLY ->
                         System.out.println("[MpvPlayer] 命令回复 error=" + event.error
                                 + " (" + mpv().mpv_error_string(event.error) + ")");
@@ -455,7 +537,15 @@ public class MpvPlayer {
         try (Memory wMem = new Memory(8); Memory hMem = new Memory(8)) {
             int rw = mpv().mpv_get_property(handle, "video-params/w", MpvNative.MPV_FORMAT_INT64, wMem);
             int rh = mpv().mpv_get_property(handle, "video-params/h", MpvNative.MPV_FORMAT_INT64, hMem);
-            if (rw < 0 || rh < 0) return; // 解码器未就绪
+            if (rw < 0 || rh < 0) {
+                // 解码器未就绪/已结束（idle）→ 清空尺寸，阻止用旧尺寸渲染黑帧
+                // （END_FILE 也会清零，这里兜底覆盖重载间隙等场景）
+                if (videoW != 0 || videoH != 0) {
+                    videoW = 0; videoH = 0;
+                    System.out.println("[MpvPlayer] 视频参数失效，停止渲染");
+                }
+                return;
+            }
             int nw = (int) wMem.getLong(0);
             int nh = (int) hMem.getLong(0);
             if (nw > 0 && nh > 0 && (nw != videoW || nh != videoH)) {
