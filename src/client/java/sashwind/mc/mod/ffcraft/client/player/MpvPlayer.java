@@ -313,33 +313,44 @@ public class MpvPlayer {
     /** 是否有视频帧 */
     public boolean hasVideoFrame() { return hasVideo.get(); }
 
-    /** 停止播放 */
+    /**
+     * 停止播放。mpv 销毁是重活（quit + terminate 会等核心线程、解码链、网络清理退出，
+     * 网络拉流时可阻塞数百 ms）→ 挪到后台 daemon 线程，避免销毁/重建 libmpv 时主线程卡顿。
+     * 安全前提：调用方已先把本播放器从 players map 移除（之后主线程不再 pollAndRender），
+     * 且 mpv 核心 API 线程安全（mpv_command_string / mpv_render_context_free /
+     * mpv_terminate_destroy 均可在任意线程调用）。JNA 回调只写 volatile 标志和线程安全队列。
+     */
     public void stopPulling() {
         running.set(false);
-        try { mpv().mpv_command_string(handle, "quit 0"); } catch (Exception ignored) {}
-        // 清理 frameQueue
+        // 清理 frameQueue（快，留在主线程；NativeImage 已上传过纹理，close 安全）
         NativeImage f;
         while ((f = frameQueue.poll()) != null) f.close();
-        // 释放音频渲染上下文
-        if (audioCtx != 0) {
-            try { mpv().mpv_audio_render_context_free(audioCtx); } catch (Exception ignored) {}
-            audioCtx = 0;
-            audioCtxOk = false;
-        }
-        // 释放渲染上下文
-        if (renderCtx != 0) {
-            try { mpv().mpv_render_context_free(renderCtx); } catch (Exception ignored) {}
-            renderCtx = 0;
-        }
-        // 销毁 mpv
-        try { mpv().mpv_terminate_destroy(handle); } catch (Exception ignored) {}
-        // 清理渲染目标池
-        for (int i = 0; i < TARGET_POOL_SIZE; i++) {
-            if (targetPool[i] != null) { targetPool[i].close(); targetPool[i] = null; }
-        }
-        // 清理音频队列
-        audioQueue.clear();
-        System.out.println("[MpvPlayer] 已停止: " + url);
+
+        Thread destroy = new Thread(() -> {
+            try { mpv().mpv_command_string(handle, "quit 0"); } catch (Exception ignored) {}
+            // 释放音频渲染上下文
+            if (audioCtx != 0) {
+                try { mpv().mpv_audio_render_context_free(audioCtx); } catch (Exception ignored) {}
+                audioCtx = 0;
+                audioCtxOk = false;
+            }
+            // 释放渲染上下文
+            if (renderCtx != 0) {
+                try { mpv().mpv_render_context_free(renderCtx); } catch (Exception ignored) {}
+                renderCtx = 0;
+            }
+            // 销毁 mpv
+            try { mpv().mpv_terminate_destroy(handle); } catch (Exception ignored) {}
+            // 清理渲染目标池
+            for (int i = 0; i < TARGET_POOL_SIZE; i++) {
+                if (targetPool[i] != null) { targetPool[i].close(); targetPool[i] = null; }
+            }
+            // 清理音频队列（LinkedBlockingQueue 线程安全，与 OpenAlAudioPlayer 排空并发无碍）
+            audioQueue.clear();
+            System.out.println("[MpvPlayer] 已停止: " + url);
+        }, "mpv-destroy");
+        destroy.setDaemon(true);
+        destroy.start();
     }
 
     /** 跳转（秒） */

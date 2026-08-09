@@ -1,39 +1,24 @@
 package sashwind.mc.mod.ffcraft.mixin.client;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.TitleScreen;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import sashwind.mc.mod.drawlib.client.lib;
-import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader;
-import sashwind.mc.mod.ffcraft.client.player.MpvPlayer;
-import sashwind.mc.mod.ffcraft.client.screens.MpvInstallScreen;
+import sashwind.mc.mod.ffcraft.client.FFCraftClient;
 
 /**
- * 在标题画面初始化时检查 libmpv，未安装则弹出安装界面。
+ * 在标题画面初始化时登记 libmpv 安装检查。
+ *
+ * 注意：不能在这里直接弹安装界面。TitleScreen.init 发生在 Minecraft.<init> 构造早期，
+ * 此时 setScreenAndShow 会立即渲染一帧，dynamic_fps 等 mod 的 mixin 访问尚未初始化的
+ * 字段（如 framerateLimitTracker）会 NPE。实际弹屏推迟到第一 tick（构造完成后）。
  */
 @Mixin(TitleScreen.class)
 public class TitleScreenMixin {
 
     @Inject(method = "init", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
-        // 只弹一次
-        if (MpvInstallScreen.hasShown()) return;
-        // 已安装则跳过
-        if (MpvPlayer.isAvailable()) {
-            MpvInstallScreen.markShown();
-            return;
-        }
-        // 不支持自动下载的平台也跳过
-        MpvNativeLoader.State state = MpvNativeLoader.getState();
-        if (state == MpvNativeLoader.State.UNSUPPORTED) {
-            MpvInstallScreen.markShown();
-            return;
-        }
-
-        MpvInstallScreen.markShown();
-        lib.setScreenCompat(Minecraft.getInstance(), new MpvInstallScreen());
+        FFCraftClient.requestMpvInstallCheck();
     }
 }

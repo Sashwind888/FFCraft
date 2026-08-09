@@ -237,7 +237,7 @@ public class MainScreen extends Screen {
             case "download" -> {
                 if (!mpvDownloading) {
                     mpvDownloading = true;
-                    MpvNativeLoader.downloadAsync(p -> {}).thenAccept(ok -> {
+                    MpvNativeLoader.downloadAsync(p -> mpvProgress = Math.max(mpvProgress, p)).thenAccept(ok -> {
                         if (ok) showMpvPrompt = false;
                         mpvDownloading = false;
                     });
@@ -257,7 +257,7 @@ public class MainScreen extends Screen {
     private boolean showMpvPrompt = false;
     private Button mpvDownloadBtn, mpvManualBtn, mpvDismissBtn;
     private boolean mpvDownloading;
-    private int mpvProgress;
+    private volatile int mpvProgress; // 下载线程回调直接写入
 
     @Override
     public void tick() {
@@ -524,6 +524,10 @@ public class MainScreen extends Screen {
         List<VideoScreenData> screens = player.screens();
         if (screens.isEmpty()) {
             graphics.text(this.font, tx("key.screens.mainscreen.empty.no_screen"), px + 2, py, 0xFF888888);
+            // 空列表也显示“新建屏幕”按钮（否则没有屏幕时创建按钮丢失，无法创建第一个屏幕）
+            scrSaveBtnY = py + 26;
+            drawUniBtn(graphics, px + 76, scrSaveBtnY, 68, 20,
+                    tx("key.screens.mainscreen.button.new_screen"), mouseX, mouseY);
             return;
         }
         if (LeftPanelHelper.selectedScreenIndex < 0 || LeftPanelHelper.selectedScreenIndex >= screens.size())
@@ -694,7 +698,13 @@ public class MainScreen extends Screen {
         }
 
         // --- 屏幕设置页签 ---
-        if (activeTab == 2 && hasSelectedScreen()) {
+        if (activeTab == 2) {
+            // 空列表：只支持“新建屏幕”（按钮丢失修复——没有屏幕时无法创建第一个屏幕）
+            if (!hasSelectedScreen()) {
+                if (inRect(mx, pmy, rp + 76, scrSaveBtnY, 68, 20) && hasSelectedPlayer())
+                    createScreenFor(getSelectedPlayer());
+                return super.mouseClicked(event, doubleClick);
+            }
             if (event.button() == 2 && uvEditor.isInUVArea(mx, pmy))
             { panningUV = true; dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
             if (doubleClick) { String s = hitSlidAt(mx, pmy); if (s != null) { startSliderEdit(s); return true; } }

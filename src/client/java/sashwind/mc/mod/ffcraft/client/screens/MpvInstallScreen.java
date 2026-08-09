@@ -26,13 +26,15 @@ public class MpvInstallScreen extends Screen {
     public static void markShown() { alreadyShown = true; }
 
     private boolean downloading;
-    private int progress;
+    private volatile int progress; // 下载线程回调直接写入
+    private int doneTicks; // 下载完成后停留的 tick 数（让用户看到 100%）
 
-    private int boxW = 360, boxH = 240;
+    private int boxW = 360, boxH = 280;
     private int boxX, boxY;
 
-    // 镜像选择器点击区域
-    private int mirrorLeftX, mirrorRightX, mirrorLabelX, mirrorLabelW, mirrorRowY;
+    // 镜像下拉菜单
+    private boolean mirrorMenuOpen;
+    private int mirrorBoxX, mirrorBoxW, mirrorRowY;
 
     public MpvInstallScreen() {
         super(Component.translatable("key.screens.mpvinstall.title"));
@@ -46,17 +48,10 @@ public class MpvInstallScreen extends Screen {
         int bw = 90, btnRowY = boxY + 190;
         int bx = (this.width - bw * 3 - 16) / 2;
 
-        // 镜像选择行：标签 + ◀ + 名称框 + ▶ 整体居中
+        // 镜像下拉选择框（整体居中）
         mirrorRowY = boxY + 148;
-        String label = txt("key.screens.mpvinstall.mirror") + ":";
-        int labelW = this.font.width(label);
-        int mw = 240; // 选择器总宽（含 ◀▶）
-        int rowW = labelW + 10 + mw;
-        int rowX = (this.width - rowW) / 2;
-        mirrorLabelX = rowX;
-        mirrorLeftX  = rowX + labelW + 10;
-        mirrorRightX = mirrorLeftX + mw - 20;
-        mirrorLabelW = mw - 40;
+        mirrorBoxW = 260;
+        mirrorBoxX = (this.width - mirrorBoxW) / 2;
 
         addRenderableWidget(Button.builder(
                 Component.translatable("key.screens.mpvinstall.download"),
@@ -78,18 +73,24 @@ public class MpvInstallScreen extends Screen {
     public void tick() {
         super.tick();
         if (downloading) {
-            progress = MpvNativeLoader.getDownloadProgress();
-            if (MpvNativeLoader.isLoaded()) closeScreen();
-            if (MpvNativeLoader.getState() == MpvNativeLoader.State.FAILED) downloading = false;
+            // 下载线程通过回调直连 progress，这里只做兜底（不会倒退回退）
+            progress = Math.max(progress, MpvNativeLoader.getDownloadProgress());
+            // 下载完成后停留 10 tick（500ms）显示 100%，再关闭界面
+            if (MpvNativeLoader.isLoaded()) {
+                if (++doneTicks >= 10) closeScreen();
+            } else if (MpvNativeLoader.getState() == MpvNativeLoader.State.FAILED) {
+                downloading = false;
+            }
         }
     }
 
     private void startDownload() {
         if (downloading) return;
         downloading = true;
-        MpvNativeLoader.downloadAsync(p -> {}).thenAccept(ok -> {
-            if (ok) Minecraft.getInstance().execute(this::closeScreen);
-            else downloading = false;
+        doneTicks = 0;
+        MpvNativeLoader.downloadAsync(p -> progress = Math.max(progress, p)).thenAccept(ok -> {
+            // 成功时不立即关闭：由 tick 里的 doneTicks 停留 500ms 显示 100%
+            if (!ok) downloading = false;
         });
     }
 
@@ -143,29 +144,6 @@ public class MpvInstallScreen extends Screen {
         String shortPath = path.length() > 50 ? "…" + path.substring(path.length() - 48) : path;
         graphics.text(font, "▸ " + shortPath, cx + (cw - font.width("▸ " + shortPath)) / 2, cy + 74, 0xFF777777);
 
-        // ---- 镜像选择行 ----
-        String mirrorLabel = txt("key.screens.mpvinstall.mirror") + ":";
-        graphics.text(font, mirrorLabel, mirrorLabelX, mirrorRowY + 2, 0xFFAAAAAA);
-
-        // ◀ 按钮
-        int mlx = mirrorLeftX, mrx = mirrorRightX;
-        boolean hovL = inRect(mouseX, mouseY, mlx, mirrorRowY, 20, 16);
-        boolean hovR = inRect(mouseX, mouseY, mrx, mirrorRowY, 20, 16);
-        graphics.fill(mlx, mirrorRowY, mlx + 20, mirrorRowY + 16, hovL ? 0xFF555555 : 0xFF3A3A3A);
-        graphics.text(font, "◀", mlx + 5, mirrorRowY + 2, hovL ? 0xFFFFAA44 : 0xFFCCCCCC);
-
-        // 当前镜像名
-        String curMirror = MpvNativeLoader.getMirrorName(MpvNativeLoader.getSelectedMirror());
-        int labelX = mirrorLabelX + 20;
-        graphics.fill(labelX, mirrorRowY, labelX + mirrorLabelW, mirrorRowY + 16, 0xFF222233);
-        drawBorder(graphics, labelX, mirrorRowY, mirrorLabelW, 16, 0xFF555577);
-        int textW = font.width(curMirror);
-        graphics.text(font, curMirror, labelX + (mirrorLabelW - textW) / 2, mirrorRowY + 2, 0xFFEEEEEE);
-
-        // ▶ 按钮
-        graphics.fill(mrx, mirrorRowY, mrx + 20, mirrorRowY + 16, hovR ? 0xFF555555 : 0xFF3A3A3A);
-        graphics.text(font, "▶", mrx + 5, mirrorRowY + 2, hovR ? 0xFFFFAA44 : 0xFFCCCCCC);
-
         // 进度条
         if (downloading) {
             int pbX = cx + 30, pbW = cw - 60, pbY = boxY + 170, pbH = 8;
@@ -183,23 +161,56 @@ public class MpvInstallScreen extends Screen {
         }
 
         super.extractRenderState(graphics, mouseX, mouseY, delta);
+
+        // ---- 镜像下拉选择（最后渲染置顶，展开的选项盖住下方按钮）----
+        String curMirror = MpvNativeLoader.getMirrorName(MpvNativeLoader.getSelectedMirror());
+        String boxText = txt("key.screens.mpvinstall.mirror") + ": " + curMirror;
+        boolean hovBox = inRect(mouseX, mouseY, mirrorBoxX, mirrorRowY, mirrorBoxW, 16);
+        graphics.fill(mirrorBoxX, mirrorRowY, mirrorBoxX + mirrorBoxW, mirrorRowY + 16,
+                hovBox || mirrorMenuOpen ? 0xFF444455 : 0xFF222233);
+        drawBorder(graphics, mirrorBoxX, mirrorRowY, mirrorBoxW, 16, 0xFF555577);
+        graphics.text(font, boxText, mirrorBoxX + (mirrorBoxW - font.width(boxText)) / 2,
+                mirrorRowY + 2, 0xFFEEEEEE);
+        graphics.text(font, mirrorMenuOpen ? "▲" : "▼",
+                mirrorBoxX + mirrorBoxW - 12, mirrorRowY + 2, 0xFFAAAAAA);
+
+        // 展开的镜像选项列表
+        if (mirrorMenuOpen) {
+            int sel = MpvNativeLoader.getSelectedMirror();
+            int count = MpvNativeLoader.getMirrorCount();
+            for (int i = 0; i < count; i++) {
+                int oy = mirrorRowY + 16 + i * 16;
+                boolean oh = inRect(mouseX, mouseY, mirrorBoxX, oy, mirrorBoxW, 16);
+                graphics.fill(mirrorBoxX, oy, mirrorBoxX + mirrorBoxW, oy + 16,
+                        oh ? 0xFF444466 : 0xFF2A2A3E);
+                if (i == sel) drawBorder(graphics, mirrorBoxX, oy, mirrorBoxW, 16, 0xFF55AA55);
+                graphics.text(font, MpvNativeLoader.getMirrorName(i),
+                        mirrorBoxX + 8, oy + 2, i == sel ? 0xFF55FF55 : 0xFFCCCCCC);
+            }
+        }
     }
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int mx = (int) event.x(), my = (int) event.y();
 
-        // 镜像左箭头
-        if (inRect(mx, my, mirrorLeftX, mirrorRowY, 20, 16)) {
-            int cur = MpvNativeLoader.getSelectedMirror();
-            int n = (cur - 1 + MpvNativeLoader.getMirrorCount()) % MpvNativeLoader.getMirrorCount();
-            MpvNativeLoader.setSelectedMirror(n);
+        // 镜像下拉框：切换展开/收起
+        if (inRect(mx, my, mirrorBoxX, mirrorRowY, mirrorBoxW, 16)) {
+            mirrorMenuOpen = !mirrorMenuOpen;
             return true;
         }
-        // 镜像右箭头
-        if (inRect(mx, my, mirrorRightX, mirrorRowY, 20, 16)) {
-            MpvNativeLoader.cycleMirror();
-            return true;
+        // 展开时：点击选项 → 选中并收起；点击其他区域 → 收起（不拦截后续点击）
+        if (mirrorMenuOpen) {
+            int count = MpvNativeLoader.getMirrorCount();
+            for (int i = 0; i < count; i++) {
+                int oy = mirrorRowY + 16 + i * 16;
+                if (inRect(mx, my, mirrorBoxX, oy, mirrorBoxW, 16)) {
+                    MpvNativeLoader.setSelectedMirror(i);
+                    mirrorMenuOpen = false;
+                    return true;
+                }
+            }
+            mirrorMenuOpen = false;
         }
 
         return super.mouseClicked(event, doubleClick);

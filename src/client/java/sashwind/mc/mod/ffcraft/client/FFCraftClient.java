@@ -24,8 +24,11 @@ import sashwind.mc.mod.drawlib.client.lib;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import com.mojang.blaze3d.platform.InputConstants;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
+import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader;
+import sashwind.mc.mod.ffcraft.client.player.MpvPlayer;
 import sashwind.mc.mod.ffcraft.client.player.Player;
 import sashwind.mc.mod.ffcraft.client.screens.MainScreen;
+import sashwind.mc.mod.ffcraft.client.screens.MpvInstallScreen;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,6 +51,33 @@ public class FFCraftClient implements ClientModInitializer {
     private static FFCraftClient instance;//单例
     public static FFCraftClient getInstance() {
         return instance;
+    }
+
+    /** TitleScreenMixin 登记的 libmpv 安装检查请求，由 END_CLIENT_TICK 消费（构造完成后才安全） */
+    private static boolean mpvInstallCheckPending = false;
+
+    /** 在标题画面初始化时调用：登记安装检查，推迟到第一 tick 执行 */
+    public static void requestMpvInstallCheck() {
+        mpvInstallCheckPending = true;
+    }
+
+    private static void checkMpvInstallPrompt(Minecraft client) {
+        // 只弹一次
+        if (MpvInstallScreen.hasShown()) return;
+        // 已安装则跳过
+        if (MpvPlayer.isAvailable()) {
+            MpvInstallScreen.markShown();
+            return;
+        }
+        // 不支持自动下载的平台也跳过
+        MpvNativeLoader.State state = MpvNativeLoader.getState();
+        if (state == MpvNativeLoader.State.UNSUPPORTED) {
+            MpvInstallScreen.markShown();
+            return;
+        }
+
+        MpvInstallScreen.markShown();
+        lib.setScreenCompat(client, new MpvInstallScreen());
     }
 
     KeyMapping.Category CATEGORY = KeyMapping.Category.register(
@@ -133,6 +163,15 @@ public class FFCraftClient implements ClientModInitializer {
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             Player.clientEndTick();
+
+            // libmpv 安装检查：由 TitleScreenMixin 登记，这里消费。
+            // 必须延迟到第一 tick —— Minecraft.<init> 构造早期直接 setScreenAndShow
+            // 会立即渲染一帧，此时 framerateLimitTracker 等字段尚未初始化，
+            // dynamic_fps 等 mod 的 renderFrame mixin 会 NPE。
+            if (mpvInstallCheckPending) {
+                mpvInstallCheckPending = false;
+                checkMpvInstallPrompt(client);
+            }
 
             while (this.openGuiKey.consumeClick()) {
                 if (client.player != null) {

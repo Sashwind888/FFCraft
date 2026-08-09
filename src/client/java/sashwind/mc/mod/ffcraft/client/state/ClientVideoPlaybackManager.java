@@ -6,9 +6,11 @@ import net.minecraft.client.Minecraft;
 import sashwind.mc.mod.ffcraft.client.audio.OpenAlAudioPlayer;
 import sashwind.mc.mod.ffcraft.client.player.MpvPlayer;
 import sashwind.mc.mod.ffcraft.common.model.PlaybackStatus;
+import sashwind.mc.mod.ffcraft.common.model.ScreenVertex;
 import sashwind.mc.mod.ffcraft.common.model.UvTransform;
 import sashwind.mc.mod.ffcraft.common.model.VideoPlayerData;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -181,11 +183,46 @@ public class ClientVideoPlaybackManager {
             downscaled = downscale(frame, maxPixels);
             if (downscaled != null) toPush = downscaled;
         }
+        // 1px 黑边（复用缓存 buffer，setTexture 同步拷贝，上传后可复用）：
+        // clamp 采样会把最边缘的像素拉伸到屏幕边缘，黑边让拉伸区域落在纯黑上
+        toPush = padBorder(toPush);
         var wd = ClientScreenRenderManager.getPlayerWorldDraw(player.id());
         if (wd != null) {
             wd.setTexture(toPush.getWidth(), toPush.getHeight(), toPush);
         }
         if (downscaled != null) downscaled.close();
+    }
+
+    /** 黑边缓存（尺寸匹配时复用，避免每帧分配） */
+    private static NativeImage borderCache;
+    private static int borderCacheW = -1, borderCacheH = -1;
+
+    /**
+     * 给帧四周各加 1px 纯黑边框（视频内容保持在原区域，边缘被拉伸时显示黑色）。
+     * 行拷贝用 bulk 内存操作，1280x720 约 3.7MB/帧，亚毫秒级。
+     */
+    private static NativeImage padBorder(NativeImage src) {
+        int sw = src.getWidth(), sh = src.getHeight();
+        int dw = sw + 2, dh = sh + 2;
+        if (borderCache == null || borderCacheW != dw || borderCacheH != dh) {
+            if (borderCache != null) borderCache.close();
+            borderCache = new NativeImage(NativeImage.Format.RGBA, dw, dh, false);
+            borderCacheW = dw; borderCacheH = dh;
+        }
+        java.nio.ByteBuffer d = org.lwjgl.system.MemoryUtil.memByteBuffer(borderCache.getPointer(), dw * dh * 4);
+        java.nio.ByteBuffer s = org.lwjgl.system.MemoryUtil.memByteBuffer(src.getPointer(), sw * sh * 4);
+        // 顶/底黑边行
+        for (int x = 0; x < dw; x++) {
+            d.putInt(x * 4, 0xFF000000);
+            d.putInt((dh - 1) * dw * 4 + x * 4, 0xFF000000);
+        }
+        for (int y = 0; y < sh; y++) {
+            int rowDst = (y + 1) * dw * 4;
+            d.putInt(rowDst, 0xFF000000);                                  // 左黑边
+            d.put(rowDst + 4, s, y * sw * 4, sw * 4);                      // 视频行（bulk 拷贝）
+            d.putInt(rowDst + (dw - 1) * 4, 0xFF000000);                   // 右黑边
+        }
+        return borderCache;
     }
 
     // ===== 生命周期 =====
@@ -536,6 +573,7 @@ public class ClientVideoPlaybackManager {
         playbackStartMs.clear();
         playbackStartSecs.clear();
         if (placeholderImage != null) { placeholderImage.close(); placeholderImage = null; }
+        if (borderCache != null) { borderCache.close(); borderCache = null; borderCacheW = -1; borderCacheH = -1; }
         ClientScreenRenderManager.clearAll();
         stopByDistance.clear();
         pauseByDistance.clear();
@@ -558,21 +596,12 @@ public class ClientVideoPlaybackManager {
     private static void recalcUvForVideo(UUID pid, VideoPlayerData player, double videoAspect) {
         for (var sd : player.screens()) {
             if (sd.uvManuallyEdited() || uvManuallyEdited.getOrDefault(sd.id(), false)) continue;
-            if (sd.vertices().size() < 3) continue;
-            double minX = Double.MAX_VALUE, maxX = -Double.MAX_VALUE;
-            double minY = Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
-            double minZ = Double.MAX_VALUE, maxZ = -Double.MAX_VALUE;
-            for (var v : sd.vertices()) {
-                minX = Math.min(minX, v.x()); maxX = Math.max(maxX, v.x());
-                minY = Math.min(minY, v.y()); maxY = Math.max(maxY, v.y());
-                minZ = Math.min(minZ, v.z()); maxZ = Math.max(maxZ, v.z());
-            }
-            double sizeX = maxX - minX, sizeY = maxY - minY, sizeZ = maxZ - minZ;
-            double screenW, screenH;
-            if (sizeY < 0.01) { screenW = Math.max(sizeX, sizeZ); screenH = Math.min(sizeX, sizeZ); }
-            else { screenW = Math.max(sizeX, sizeZ); screenH = sizeY; }
-            if (screenW < 0.01 || screenH < 0.01) continue;
-            double screenAspect = screenW / screenH;
+            // 屏幕宽高比必须在 UV 坐标系下测量（u 轴 = 首条边，与渲染端 Plane 一致）。
+            // 旧实现用世界坐标猜方向（sizeX/sizeZ 为宽、sizeY 为高）——玩家从竖直边
+            // 开始点选时 u 轴是竖直的，letterbox 比例加错轴 → 视频被纵向拉伸。
+            double[] span = uvSpanOf(sd.vertices());
+            if (span == null) continue;
+            double screenAspect = span[0] / span[1];
             double su, sv;
             if (screenAspect > videoAspect) { su = screenAspect / videoAspect; sv = 1.0; }
             else { su = 1.0; sv = videoAspect / screenAspect; }
@@ -581,5 +610,52 @@ public class ClientVideoPlaybackManager {
             var newUv = new UvTransform(0, 0, su, sv, 0, cur.flipU(), cur.flipV());
             sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updateScreenUv(pid, sd.id(), newUv);
         }
+    }
+
+    /**
+     * 屏幕顶点在 UV 方向上的跨距 {uSpan, vSpan}：u 轴 = 首条非退化边方向
+     * （与渲染端 Plane.D3D22D 的 UV 基一致），v = 法线 × u。
+     * 退化（边长为 0 / 顶点共线）返回 null。
+     */
+    private static double[] uvSpanOf(List<ScreenVertex> verts) {
+        int n = verts.size();
+        if (n < 3) return null;
+        ScreenVertex p0 = null;
+        double ux = 0, uy = 0, uz = 0;
+        double eLen = 0;
+        for (int i = 0; i < n; i++) {
+            ScreenVertex a = verts.get(i), b = verts.get((i + 1) % n);
+            double ex = b.x() - a.x(), ey = b.y() - a.y(), ez = b.z() - a.z();
+            eLen = Math.sqrt(ex * ex + ey * ey + ez * ez);
+            if (eLen > 1e-4) {
+                p0 = a;
+                ux = ex / eLen; uy = ey / eLen; uz = ez / eLen;
+                break;
+            }
+        }
+        if (p0 == null) return null;
+        // 法线：在其余顶点中找一个与首边不平行的点
+        double nx = 0, ny = 0, nz = 0;
+        double nLen = 0;
+        for (ScreenVertex v : verts) {
+            double ax = v.x() - p0.x(), ay = v.y() - p0.y(), az = v.z() - p0.z();
+            double cx = ay * uz - az * uy, cy = az * ux - ax * uz, cz = ax * uy - ay * ux;
+            nLen = Math.sqrt(cx * cx + cy * cy + cz * cz);
+            if (nLen > 1e-4) { nx = cx / nLen; ny = cy / nLen; nz = cz / nLen; break; }
+        }
+        if (nLen < 1e-4) return null;
+        // v = 法线 × u（与渲染端一致的正交基）
+        double vx = ny * uz - nz * uy, vy = nz * ux - nx * uz, vz = nx * uy - ny * ux;
+        double minU = Double.MAX_VALUE, maxU = -Double.MAX_VALUE;
+        double minV = Double.MAX_VALUE, maxV = -Double.MAX_VALUE;
+        for (ScreenVertex v : verts) {
+            double du = (v.x() - p0.x()) * ux + (v.y() - p0.y()) * uy + (v.z() - p0.z()) * uz;
+            double dv = (v.x() - p0.x()) * vx + (v.y() - p0.y()) * vy + (v.z() - p0.z()) * vz;
+            minU = Math.min(minU, du); maxU = Math.max(maxU, du);
+            minV = Math.min(minV, dv); maxV = Math.max(maxV, dv);
+        }
+        double uSpan = maxU - minU, vSpan = maxV - minV;
+        if (uSpan < 1e-4 || vSpan < 1e-4) return null;
+        return new double[]{uSpan, vSpan};
     }
 }

@@ -12,11 +12,19 @@ import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -103,10 +111,10 @@ public class MpvNativeLoader {
 
     // ---- 下载镜像站 ----
     // { 显示名称, 下载域名前缀 (null=原生github) }
-    // 下载 URL 中 https://github.com 会被替换为 prefix
+    // 按实测速度排序：git.yylx.win 最快，优先使用；github 原生兜底
     private static final String[][] DOWNLOAD_MIRRORS = {
-        { "github.com (原生)",     null },
         { "git.yylx.win",          "https://git.yylx.win" },
+        { "github.com (原生)",     null },
         { "jiashu.1win.eu.org",    "https://jiashu.1win.eu.org" },
         { "777.z321.cc.cd",        "https://777.z321.cc.cd" },
         { "gg.z321.cc.cd",         "https://gg.z321.cc.cd" },
@@ -247,12 +255,8 @@ public class MpvNativeLoader {
                 int startMirror = selectedMirror;
                 for (int attempt = 0; attempt < DOWNLOAD_MIRRORS.length; attempt++) {
                     int mi = (startMirror + attempt) % DOWNLOAD_MIRRORS.length;
-                    String dlUrl;
-                    if (mi == 0) {
-                        dlUrl = originalUrl;
-                    } else {
-                        dlUrl = DOWNLOAD_MIRRORS[mi][1] + "/" + originalUrl;
-                    }
+                    String prefix = DOWNLOAD_MIRRORS[mi][1];
+                    String dlUrl = (prefix == null) ? originalUrl : prefix + "/" + originalUrl;
                     try {
                         statusMsg = "正在下载 (" + DOWNLOAD_MIRRORS[mi][0] + ")...";
                         downloadFile(dlUrl, tmpFile, progressCallback);
@@ -309,12 +313,8 @@ public class MpvNativeLoader {
         int start = selectedMirror;
         for (int attempt = 0; attempt < DOWNLOAD_MIRRORS.length; attempt++) {
             int mirrorIdx = (start + attempt) % DOWNLOAD_MIRRORS.length;
-            String tryUrl;
-            if (mirrorIdx == 0) {
-                tryUrl = apiUrl; // 原生 GitHub API
-            } else {
-                tryUrl = DOWNLOAD_MIRRORS[mirrorIdx][1] + "/" + apiUrl;
-            }
+            String prefix = DOWNLOAD_MIRRORS[mirrorIdx][1];
+            String tryUrl = (prefix == null) ? apiUrl : prefix + "/" + apiUrl; // 原生 GitHub API
             try {
                 String result = tryFetchApi(tryUrl, keyword, ext);
                 if (result != null) {
@@ -359,15 +359,162 @@ public class MpvNativeLoader {
 
     // ---- 文件下载 ----
 
+    /** 低于该大小不值得分段（2MB 以下直接单线程） */
+    private static final long PARALLEL_MIN_FILE = 2L * 1024 * 1024;
+    /** 每段至少 4MB，最多 8 段并发 */
+    private static final long PARALLEL_MIN_SEGMENT = 4L * 1024 * 1024;
+    private static final int PARALLEL_MAX_SEGMENTS = 8;
+
+    /**
+     * 多线程分段下载：先探测服务器是否支持 HTTP Range（响应 206 + Content-Range），
+     * 支持则分 N 段并发下载（GitHub 和多数镜像站都支持），否则回退单线程。
+     */
     private static void downloadFile(String url, Path dest, Consumer<Integer> progress)
             throws IOException {
-        // 跳过 HTTPS 验证（某些 Java 版本 + 代理环境）
+        // 手动跟随重定向：Java 自动重定向会丢弃 Range 头，必须先解析出最终 URL
+        String finalUrl = resolveRedirects(url);
+
+        long total = -1;
+        HttpURLConnection probe = openConn(finalUrl, "bytes=0-0");
+        try {
+            if (probe.getResponseCode() == 206) {
+                total = parseContentRangeTotal(probe.getHeaderField("Content-Range"));
+            }
+        } finally {
+            probe.disconnect();
+        }
+
+        if (total >= PARALLEL_MIN_FILE) {
+            System.out.println("[MpvNative] 服务器支持分段，多线程下载 (" + total / 1048576 + "MB)");
+            downloadParallel(finalUrl, dest, total, progress);
+        } else {
+            downloadSequential(finalUrl, dest, progress);
+        }
+    }
+
+    /** 手动跟随 HTTP 重定向链，返回最终 URL（302 → Location，相对地址用原 URL 解析） */
+    private static String resolveRedirects(String url) throws IOException {
+        HttpURLConnection conn = openConn(url, null);
+        int code;
+        String loc;
+        try {
+            code = conn.getResponseCode();
+            loc = conn.getHeaderField("Location");
+        } finally {
+            conn.disconnect();
+        }
+        if (code >= 300 && code < 400 && loc != null) {
+            return resolveRedirects(URI.create(url).resolve(loc).toString());
+        }
+        return url;
+    }
+
+    private static HttpURLConnection openConn(String url, String range) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
         conn.setRequestProperty("User-Agent", "FFCraft-Mod/1.0");
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(120000);
-        conn.setInstanceFollowRedirects(true);
+        conn.setInstanceFollowRedirects(false);
+        if (range != null) conn.setRequestProperty("Range", range);
+        return conn;
+    }
 
+    /** 解析 Content-Range: bytes 0-0/12345 → 12345；解析失败返回 -1 */
+    private static long parseContentRangeTotal(String header) {
+        if (header == null) return -1;
+        int slash = header.lastIndexOf('/');
+        if (slash < 0) return -1;
+        try {
+            return Long.parseLong(header.substring(slash + 1).trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /** 分段并发下载：文件预分配为 total 长度，每段一个线程写自己的偏移 */
+    private static void downloadParallel(String url, Path dest, long total, Consumer<Integer> progress)
+            throws IOException {
+        int segments = (int) Math.max(2, Math.min(PARALLEL_MAX_SEGMENTS, total / PARALLEL_MIN_SEGMENT + 1));
+        System.out.println("[MpvNative] 分段数=" + segments);
+
+        AtomicLong done = new AtomicLong();
+        AtomicBoolean failed = new AtomicBoolean();
+        AtomicReference<IOException> firstError = new AtomicReference<>();
+        ExecutorService pool = Executors.newFixedThreadPool(segments);
+        CountDownLatch latch = new CountDownLatch(segments);
+
+        try (FileChannel prealloc = FileChannel.open(dest, StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
+            prealloc.position(total - 1);
+            prealloc.write(ByteBuffer.wrap(new byte[]{0})); // 预分配，避免各段并发写时文件伸缩
+        }
+
+        for (int i = 0; i < segments; i++) {
+            long start = total * i / segments;
+            long end = (i == segments - 1) ? total - 1 : total * (i + 1) / segments - 1;
+            final long segStart = start, segEnd = end;
+            pool.submit(() -> {
+                try {
+                    downloadSegment(url, segStart, segEnd, total, dest, done, failed, progress);
+                } catch (IOException e) {
+                    if (firstError.compareAndSet(null, e)) failed.set(true);
+                } finally {
+                    latch.countDown();
+                }
+            });
+        }
+        pool.shutdown();
+        try {
+            latch.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            failed.set(true);
+        }
+        pool.shutdownNow();
+
+        if (failed.get()) {
+            throw firstError.get() != null ? firstError.get() : new IOException("分段下载失败");
+        }
+        downloadProgress = 100;
+        if (progress != null) progress.accept(100);
+    }
+
+    /** 下载字节区间 [start, end]，写入 dest 的对应偏移 */
+    private static void downloadSegment(String url, long start, long end, long total, Path dest,
+                                        AtomicLong done, AtomicBoolean failed, Consumer<Integer> progress)
+            throws IOException {
+        HttpURLConnection conn = openConn(url, "bytes=" + start + "-" + end);
+        try (InputStream is = conn.getInputStream();
+             ReadableByteChannel rbc = Channels.newChannel(is);
+             FileChannel fch = FileChannel.open(dest, StandardOpenOption.WRITE)) {
+            fch.position(start);
+            ByteBuffer buf = ByteBuffer.allocate(64 * 1024);
+            long expected = end - start + 1;
+            long segDone = 0;
+            while (segDone < expected) {
+                // 任一段失败 → 其余段停止（避免无谓流量 + 文件损坏）
+                if (failed.get() || Thread.currentThread().isInterrupted()) {
+                    throw new IOException("下载被取消");
+                }
+                buf.clear();
+                int n = rbc.read(buf);
+                if (n < 0) break; // 服务器提前断开
+                buf.flip();
+                while (buf.hasRemaining()) fch.write(buf);
+                segDone += n;
+                int pct = (int) (done.addAndGet(n) * 100 / total);
+                downloadProgress = pct;
+                if (progress != null) progress.accept(pct);
+            }
+            if (segDone != expected) {
+                throw new IOException("段 " + start + "-" + end + " 长度不符: " + segDone + "/" + expected);
+            }
+        }
+    }
+
+    /** 单线程下载（服务器不支持 Range 时回退） */
+    private static void downloadSequential(String url, Path dest, Consumer<Integer> progress)
+            throws IOException {
+        HttpURLConnection conn = openConn(url, null);
         long total = conn.getContentLengthLong();
         try (ReadableByteChannel rbc = Channels.newChannel(conn.getInputStream());
              FileOutputStream fos = new FileOutputStream(dest.toFile())) {
