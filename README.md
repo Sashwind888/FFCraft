@@ -1,8 +1,15 @@
 # FFCraft
 
+> [!WARNING]
+> Minecraft 26.1.* 版本暂停支持！
+
 ![ICON](./readme/icon.png)
 
 > 一个强大的 Minecraft Java 版媒体播放模组，让您在世界中播放任意媒体内容，支持自定义形状屏幕并完美兼容光影。
+
+> [!NOTE]
+> 版本号命名规则：
+> * (网络api版本号).* (大更新版本号).* (BUG 修复版本号)
 
 ## ✨ 功能特性
 
