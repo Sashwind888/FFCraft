@@ -65,5 +65,28 @@
   "key.screens.mainscreen.area.scroll_usage": "使用鼠标滚轮滚动",
 
   "key.hud.createplayer.line1": "开始创建，左键取消，右键放置点，点击起始点结束",
-  "key.hud.createplayer.vertices_count": "当前点数"
+  "key.hud.createplayer.vertices_count": "当前点数",
+
+  "key.screens.mpvinstall.title": "需安装 libmpv 原生库",
+  "key.screens.mpvinstall.title_downloading": "正在下载 libmpv...",
+  "key.screens.mpvinstall.title_failed": "libmpv 安装失败",
+  "key.screens.mpvinstall.desc": "视频播放需要 libmpv 原生库，请先安装。",
+  "key.screens.mpvinstall.hint": "下载后会自动解压到：",
+  "key.screens.mpvinstall.downloading": "正在下载...",
+  "key.screens.mpvinstall.download": "下载",
+  "key.screens.mpvinstall.retry": "重试",
+  "key.screens.mpvinstall.manual": "手动下载",
+  "key.screens.mpvinstall.dismiss": "跳过",
+  "key.screens.mpvinstall.mirror": "镜像站",
+
+  "key.screens.mainscreen.mpv.title": "需安装 libmpv 原生库",
+  "key.screens.mainscreen.mpv.title_downloading": "正在下载 libmpv...",
+  "key.screens.mainscreen.mpv.title_failed": "libmpv 安装失败",
+  "key.screens.mainscreen.mpv.desc": "视频播放需要 libmpv 原生库支持。",
+  "key.screens.mainscreen.mpv.hint": "点击\"下载\"自动获取，或点击\"手动下载\"自行放置：",
+  "key.screens.mainscreen.mpv.downloading": "正在下载...",
+  "key.screens.mainscreen.mpv.download": "下载",
+  "key.screens.mainscreen.mpv.retry": "重试",
+  "key.screens.mainscreen.mpv.manual": "手动下载",
+  "key.screens.mainscreen.mpv.dismiss": "跳过"
 }

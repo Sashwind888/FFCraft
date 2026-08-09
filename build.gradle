@@ -50,7 +50,16 @@ dependencies {
 
 
 
-    implementation 'org.bytedeco:javacv-platform:1.5.9'  // 编译时全平台
+    // JNA — libmpv 绑定
+    implementation 'net.java.dev.jna:jna:5.14.0'
+    include 'net.java.dev.jna:jna:5.14.0'
+
+    // Apache Commons Compress — tar.gz / 7z 解压支持
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    include 'org.apache.commons:commons-compress:1.27.1'
+
+    /*
+    implementation 'org.bytedeco:javacv-platform:1.5.9'  // 编译时全平台（过渡期保留）
     // 打包所有平台原生库
     include 'org.bytedeco:javacv:1.5.9'
     include 'org.bytedeco:javacpp:1.5.9'
@@ -65,13 +74,15 @@ dependencies {
         include "org.bytedeco:ffmpeg:5.1.2-1.5.8:$p"
         include "org.bytedeco:openblas:0.3.19-1.5.7:$p"
     }
+    */
+
 
     implementation "io.github.earcut4j:earcut4j:2.2.2"
     include "io.github.earcut4j:earcut4j:2.2.2"
 
     // imgui 外部mod：开发时可用，不打包
-    implementation files('libs/fabric-gui-imgui-26.2-1.1.0+imgui.1.92.0.jar')
-    implementation files('libs/imgui-java-binding-1.92.0.jar')
+    //implementation files('libs/fabric-gui-imgui-26.2-1.1.0+imgui.1.92.0.jar')
+    //implementation files('libs/imgui-java-binding-1.92.0.jar')
     implementation files('libs/DrawLib-1.0+26.2.jar')
 
 
@@ -123,6 +134,29 @@ jar {
         rename { "${it}_${project.archives_base_name}" }
     }
 }
+
+// ============ libmpv 原生库 ============
+// 将 mpv-2.dll 放到 src/client/resources/assets/ffcraft/natives/ 目录即可
+// 构建时自动打包，运行时自动解压加载
+// 下载: https://sourceforge.net/projects/mpv-player-windows/files/libmpv/
+// 下载 mpv-dev-x86_64-*.7z, 用 7-Zip 解压, 取 mpv-2.dll
+
+tasks.register('checkMpvNative') {
+    group = 'mpv'
+    description = '检查 mpv-2.dll 是否存在'
+    doLast {
+        def dll = file("src/client/resources/assets/ffcraft/natives/mpv-2.dll")
+        if (dll.exists()) {
+            logger.lifecycle('[mpv] ✅ mpv-2.dll 已就绪 ({} MB)', String.format("%.1f", dll.length() / 1048576.0))
+        } else {
+            logger.warn('[mpv] ⚠️  mpv-2.dll 未找到！')
+            logger.warn('[mpv]   请下载并放置到: {}', dll.parentFile.absolutePath)
+            logger.warn('[mpv]   下载页: https://sourceforge.net/projects/mpv-player-windows/files/libmpv/')
+            logger.warn('[mpv]   下载 mpv-dev-x86_64-*.7z → 解压 → 取 mpv-2.dll')
+        }
+    }
+}
+tasks.named('processResources') { dependsOn 'checkMpvNative' }
 
 // configure the maven publication
 publishing {

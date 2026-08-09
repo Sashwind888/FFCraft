@@ -65,5 +65,28 @@
   "key.screens.mainscreen.area.scroll_usage": "Use mouse wheel to scroll",
 
   "key.hud.createplayer.line1": "Creating — LMB cancel, RMB place vertex, click start point to finish",
-  "key.hud.createplayer.vertices_count": "Vertices"
+  "key.hud.createplayer.vertices_count": "Vertices",
+
+  "key.screens.mpvinstall.title": "libmpv Native Library Required",
+  "key.screens.mpvinstall.title_downloading": "Downloading libmpv...",
+  "key.screens.mpvinstall.title_failed": "libmpv Installation Failed",
+  "key.screens.mpvinstall.desc": "Video playback requires the libmpv native library.",
+  "key.screens.mpvinstall.hint": "The library will be extracted to:",
+  "key.screens.mpvinstall.downloading": "Downloading...",
+  "key.screens.mpvinstall.download": "Download",
+  "key.screens.mpvinstall.retry": "Retry",
+  "key.screens.mpvinstall.manual": "Manual",
+  "key.screens.mpvinstall.dismiss": "Skip",
+  "key.screens.mpvinstall.mirror": "Mirror",
+
+  "key.screens.mainscreen.mpv.title": "libmpv Native Library Required",
+  "key.screens.mainscreen.mpv.title_downloading": "Downloading libmpv...",
+  "key.screens.mainscreen.mpv.title_failed": "libmpv Installation Failed",
+  "key.screens.mainscreen.mpv.desc": "Video playback requires the libmpv native library.",
+  "key.screens.mainscreen.mpv.hint": "Click Download to get it automatically, or Manual to place it yourself:",
+  "key.screens.mainscreen.mpv.downloading": "Downloading...",
+  "key.screens.mainscreen.mpv.download": "Download",
+  "key.screens.mainscreen.mpv.retry": "Retry",
+  "key.screens.mainscreen.mpv.manual": "Manual",
+  "key.screens.mainscreen.mpv.dismiss": "Skip"
 }

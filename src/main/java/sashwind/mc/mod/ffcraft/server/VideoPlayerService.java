@@ -20,18 +20,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+
 
 public class VideoPlayerService {
     private final MinecraftServer server;
     private final VideoPlayerSavedData savedData;
-    private static final ExecutorService PROBE_EXECUTOR = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "VideoProbe");
-        t.setDaemon(true);
-        return t;
-    });
-
     public VideoPlayerService(MinecraftServer server) {
         this.server = server;
         this.savedData = VideoPlayerSavedData.get(getOverworld().getDataStorage());
@@ -297,52 +290,9 @@ public class VideoPlayerService {
                 });
     }
 
+    /** 视频分辨率探测 — 客户端 libmpv 自行处理，服务端仅保留空实现以兼容网络协议 */
     public void probeVideoResolution(UUID playerId, int videoIndex) {
-        System.out.println("[Server] probeVideoResolution called for player=" + playerId + " idx=" + videoIndex);
-        PROBE_EXECUTOR.submit(() -> {
-            org.bytedeco.javacv.FFmpegFrameGrabber grabber = null;
-            try {
-                var player = findPlayer(playerId).orElse(null);
-                if (player == null || videoIndex < 0 || videoIndex >= player.playlist().size()) {
-                    System.out.println("[Server] Probe aborted: player=" + (player==null?"null":"ok") + " idx=" + videoIndex + " size=" + (player!=null?player.playlist().size():-1));
-                    return;
-                }
-                String url = player.playlist().get(videoIndex).url();
-                System.out.println("[Server] Probe starting grabber for: " + url);
-                grabber = new org.bytedeco.javacv.FFmpegFrameGrabber(url);
-                grabber.start();
-                int w = grabber.getImageWidth();
-                int h = grabber.getImageHeight();
-                if (w > 0 && h > 0) {
-                    var oldSrc = player.playlist().get(videoIndex);
-                    var newSrc = new sashwind.mc.mod.ffcraft.common.model.VideoSource(
-                        oldSrc.url(), oldSrc.targetWidth(), oldSrc.targetHeight(), oldSrc.targetFps(), w, h);
-                    List<VideoSource> newList;
-                    synchronized (savedData) {
-                        // 重新获取 player 以防在探测期间被修改
-                        var freshPlayer = findPlayer(playerId).orElse(null);
-                        if (freshPlayer == null) return;
-                        newList = new ArrayList<>(freshPlayer.playlist());
-                        newList.set(videoIndex, newSrc);
-                        int idx = savedData.players().indexOf(freshPlayer);
-                        if (idx < 0) return;
-                        savedData.players().set(idx,
-                            new ServerVideoPlayer(freshPlayer.id(), freshPlayer.name(), freshPlayer.isPublic(), freshPlayer.editors(),
-                                newList, freshPlayer.playbackState(), freshPlayer.screens()));
-                        savedData.setDirty();
-                    }
-                    VideoPlayerServerNetworking.syncAll();
-                    System.out.println("[Server] Probed " + url + " -> " + w + "x" + h);
-                }
-            } catch (Exception e) {
-                System.err.println("[Server] Probe failed: " + e.getMessage());
-            } finally {
-                if (grabber != null) {
-                    try { grabber.stop(); } catch (Exception ignored) {}
-                    try { grabber.release(); } catch (Exception ignored) {}
-                }
-            }
-        });
+        // 不再使用 JavaCV，客户端 MpvPlayer 自行获取分辨率
     }
 
     public void addVideo(ServerPlayer actor, UUID playerId, VideoSource videoSource) {

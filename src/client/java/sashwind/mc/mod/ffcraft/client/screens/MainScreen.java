@@ -12,11 +12,15 @@ import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
+import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader;
+import sashwind.mc.mod.ffcraft.client.player.MpvPlayer;
 import sashwind.mc.mod.ffcraft.client.player.Player;
 import sashwind.mc.mod.ffcraft.client.state.ClientScreenCreationManager;
 import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlayerCache;
 import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager;
 import sashwind.mc.mod.ffcraft.common.model.*;
+import java.awt.Desktop;
+import java.net.URI;
 
 import java.util.*;
 
@@ -179,11 +183,97 @@ public class MainScreen extends Screen {
         int availH = this.height - rightPaneY - 10;
         rightPaneArea = new Area(rightPaneX, rightPaneY, rightPaneW, availH);
         rebuildTabContent();
+
+        // === mpv 下载提示浮层按钮（始终创建，按需显示/隐藏） ===
+        int bw = 90, bx = (this.width - bw * 3 - 16) / 2, by = (this.height - 180) / 2 + 130;
+        mpvDownloadBtn = btn(mpvOverlayLabel("download"), b -> mpvOverlayAction("download"), bx, by, bw, 20);
+        mpvManualBtn   = btn(mpvOverlayLabel("manual"),   b -> mpvOverlayAction("manual"),   bx + bw + 8, by, bw, 20);
+        mpvDismissBtn  = btn(mpvOverlayLabel("dismiss"),  b -> mpvOverlayAction("dismiss"),  bx + bw * 2 + 16, by, bw, 20);
+        addRenderableWidget(mpvDownloadBtn);
+        addRenderableWidget(mpvManualBtn);
+        addRenderableWidget(mpvDismissBtn);
+        updateMpvOverlayButtons();
     }
+
+    // ==================== mpv 下载浮层 ====================
+
+    /** 浮层布局 — 由 updateMpvOverlayButtons() 每 tick 更新 */
+    private int mpvBoxX, mpvBoxY, mpvBoxW = 340, mpvBoxH = 180;
+
+    private void updateMpvOverlayButtons() {
+        boolean vis = showMpvPrompt;
+        mpvDownloadBtn.visible = vis;
+        mpvManualBtn.visible = vis;
+        mpvDismissBtn.visible = vis;
+        if (!vis) return;
+
+        mpvBoxX = (this.width  - mpvBoxW) / 2;
+        mpvBoxY = (this.height - mpvBoxH) / 2;
+        int bw = 90, bx = (this.width - bw * 3 - 16) / 2, by = mpvBoxY + 130;
+        mpvDownloadBtn.setX(bx);           mpvDownloadBtn.setY(by);
+        mpvManualBtn.setX(bx + bw + 8);    mpvManualBtn.setY(by);
+        mpvDismissBtn.setX(bx + bw * 2 + 16); mpvDismissBtn.setY(by);
+
+        mpvDownloadBtn.setMessage(Component.literal(mpvOverlayLabel("download")));
+        mpvManualBtn.setMessage(Component.literal(mpvOverlayLabel("manual")));
+        mpvDismissBtn.setMessage(Component.literal(mpvOverlayLabel("dismiss")));
+    }
+
+    private String mpvOverlayLabel(String key) {
+        boolean downloading = mpvDownloading;
+        boolean failed = MpvNativeLoader.getState() == MpvNativeLoader.State.FAILED;
+        return switch (key) {
+            case "download" -> downloading ? mpvProgress + "%"
+                    : failed ? tx("key.screens.mainscreen.mpv.retry")
+                    : tx("key.screens.mainscreen.mpv.download");
+            case "manual"   -> tx("key.screens.mainscreen.mpv.manual");
+            case "dismiss"  -> tx("key.screens.mainscreen.mpv.dismiss");
+            default -> "";
+        };
+    }
+
+    private void mpvOverlayAction(String key) {
+        switch (key) {
+            case "download" -> {
+                if (!mpvDownloading) {
+                    mpvDownloading = true;
+                    MpvNativeLoader.downloadAsync(p -> {}).thenAccept(ok -> {
+                        if (ok) showMpvPrompt = false;
+                        mpvDownloading = false;
+                    });
+                }
+            }
+            case "manual" -> {
+                try { Desktop.getDesktop().browse(URI.create(MpvNativeLoader.getDownloadPageUrl())); }
+                catch (Exception e) { System.err.println("[MpvOverlay] 无法打开浏览器: " + e); }
+            }
+            case "dismiss" -> showMpvPrompt = false;
+        }
+    }
+
+    // ==================== 字段 ====================
+
+    private static boolean mpvPromptShown = false;
+    private boolean showMpvPrompt = false;
+    private Button mpvDownloadBtn, mpvManualBtn, mpvDismissBtn;
+    private boolean mpvDownloading;
+    private int mpvProgress;
 
     @Override
     public void tick() {
         super.tick();
+        // 首次打开控制面板时 libmpv 未安装 → 显示内嵌提示
+        if (!mpvPromptShown && !MpvPlayer.isAvailable()
+                && MpvNativeLoader.getState() == MpvNativeLoader.State.NOT_INSTALLED) {
+            mpvPromptShown = true;
+            showMpvPrompt = true;
+        }
+        if (mpvDownloading) {
+            mpvProgress = MpvNativeLoader.getDownloadProgress();
+            if (MpvNativeLoader.isLoaded()) { showMpvPrompt = false; mpvDownloading = false; }
+            if (MpvNativeLoader.getState() == MpvNativeLoader.State.FAILED) mpvDownloading = false;
+        }
+        updateMpvOverlayButtons();
     }
     @Override public void onClose() { cachedPlayers.clear(); lastSnapshotVersion = Long.MIN_VALUE; super.onClose(); }
     @Override public void removed() { super.removed(); }
@@ -256,6 +346,53 @@ public class MainScreen extends Screen {
 
         updateWidgetVisibility();
         super.extractRenderState(graphics, mouseX, mouseY, delta);
+
+        // === mpv 下载浮层（渲染在最上层） ===
+        if (showMpvPrompt) renderMpvOverlay(graphics, mouseX, mouseY);
+    }
+
+    private void renderMpvOverlay(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
+        // 半透明遮罩
+        graphics.fill(0, 0, this.width, this.height, 0xAA000000);
+
+        int cx = mpvBoxX, cy = mpvBoxY, cw = mpvBoxW, ch = mpvBoxH;
+
+        // 面板背景
+        graphics.fill(cx, cy, cx + cw, cy + ch, 0xFF2A2A3E);
+        drawRect(graphics, cx, cy, cw, ch, 0xFF6666AA);
+
+        // 标题
+        boolean failed = MpvNativeLoader.getState() == MpvNativeLoader.State.FAILED;
+        String title = tx(failed ? "key.screens.mainscreen.mpv.title_failed"
+                : mpvDownloading ? "key.screens.mainscreen.mpv.title_downloading"
+                : "key.screens.mainscreen.mpv.title");
+        graphics.text(this.font, title, cx + (cw - this.font.width(title)) / 2, cy + 10, 0xFFFFAA44);
+
+        // 描述 / 状态
+        String desc;
+        if (failed) {
+            desc = MpvNativeLoader.getStatusMsg();
+        } else if (mpvDownloading) {
+            desc = tx("key.screens.mainscreen.mpv.downloading") + "  " + mpvProgress + "%";
+        } else {
+            desc = tx("key.screens.mainscreen.mpv.desc");
+        }
+        graphics.text(this.font, desc, cx + (cw - this.font.width(desc)) / 2, cy + 38, 0xFFCCCCCC);
+
+        String hint = tx("key.screens.mainscreen.mpv.hint");
+        graphics.text(this.font, hint, cx + (cw - this.font.width(hint)) / 2, cy + 58, 0xFF888888);
+
+        String path = MpvNativeLoader.getLibPath().toString();
+        String shortPath = "▸ " + (path.length() > 50 ? "…" + path.substring(path.length() - 48) : path);
+        graphics.text(this.font, shortPath, cx + (cw - this.font.width(shortPath)) / 2, cy + 74, 0xFF777777);
+
+        // 进度条（下载中）
+        if (mpvDownloading) {
+            int pbX = cx + 30, pbW = cw - 60, pbY = cy + 98, pbH = 8;
+            graphics.fill(pbX, pbY, pbX + pbW, pbY + pbH, 0xFF222222);
+            graphics.fill(pbX, pbY, pbX + (int)(pbW * mpvProgress / 100f), pbY + pbH, 0xFF44AA44);
+            drawRect(graphics, pbX, pbY, pbW, pbH, 0xFF555555);
+        }
     }
 
     // ==================== 播放控制页签 ====================
@@ -484,6 +621,14 @@ public class MainScreen extends Screen {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int mx = (int) event.x(), my = (int) event.y();
+
+        // mpv 浮层可见时，拦截所有点击，仅透传给浮层按钮
+        if (showMpvPrompt) {
+            if (mpvDownloadBtn.visible && mpvDownloadBtn.isMouseOver(mx, my)) return mpvDownloadBtn.mouseClicked(event, doubleClick);
+            if (mpvManualBtn.visible   && mpvManualBtn.isMouseOver(mx, my))   return mpvManualBtn.mouseClicked(event, doubleClick);
+            if (mpvDismissBtn.visible  && mpvDismissBtn.isMouseOver(mx, my))  return mpvDismissBtn.mouseClicked(event, doubleClick);
+            return true; // 吃掉浮层外的所有点击
+        }
 
         // 关闭按钮
         if (mx >= this.width - 20 && mx <= this.width - 4 && my >= 4 && my <= 20) { this.onClose(); return true; }
