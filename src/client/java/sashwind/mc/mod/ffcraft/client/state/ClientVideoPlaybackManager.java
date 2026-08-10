@@ -23,7 +23,6 @@ public class ClientVideoPlaybackManager {
     private static final Map<UUID, Long> videoFrameSeq = new ConcurrentHashMap<>();
     private static final Map<UUID, Boolean> uvManuallyEdited = new ConcurrentHashMap<>();
     private static NativeImage placeholderImage = null;
-    private static UUID lastPlayerId;
 
     private static int pixelsPerBlock = 64;
     public static final int[] QUALITY_OPTIONS = {0, 16, 32, 64, 128, 256};
@@ -227,9 +226,11 @@ public class ClientVideoPlaybackManager {
 
     // ===== 生命周期 =====
 
-    private static int lastIndex = -1;
-    private static String lastUrl;
-    private static sashwind.mc.mod.ffcraft.common.model.PlaybackMode lastMode;
+    /** 每个播放器当前使用的播放参数（per-pid，支持同时多个播放器）。
+     *  单值缓存（lastPlayerId/lastIndex/lastUrl/lastMode）在多播放器快照下
+     *  每 tick 都会误判"参数变更"→ 销毁上一个 + 新建当前 → mpv 反复销毁重建 → CPU 满载 */
+    private record PlayerKey(int index, String url, sashwind.mc.mod.ffcraft.common.model.PlaybackMode mode) {}
+    private static final Map<UUID, PlayerKey> playerKeys = new ConcurrentHashMap<>();
 
     public static void register() {
         ClientTickEvents.END_CLIENT_TICK.register(ClientVideoPlaybackManager::onTick);
@@ -241,7 +242,13 @@ public class ClientVideoPlaybackManager {
 
     private static void onTick(Minecraft client) {
         if (!MpvPlayer.isAvailable()) return;
-        if (client.player == null || client.level == null) return;
+        if (client.player == null || client.level == null) {
+            // 兜底销毁：退到主界面/连接断开后 level 为 null，此时若还有播放器残留
+            // （整合包环境 DISCONNECT 事件可能被其他 mod 的监听器异常中断，stopAll 永远到不了），
+            // 直接在这里清掉，不依赖事件分发。
+            if (!players.isEmpty() || !audioPlayers.isEmpty()) stopAll();
+            return;
+        }
         if (client.isPaused() && client.getCurrentServer() == null) return;
         tickCounter++;
         var snap = ClientVideoPlayerCache.getSnapshot();
@@ -286,12 +293,13 @@ public class ClientVideoPlaybackManager {
                 farPause = pauseByDistance.getOrDefault(pid, false); // 滞回区间内保持原状态
             }
 
-            // 创建新 MpvPlayer（URL/player/mode 变更时）
-            if (!pid.equals(lastPlayerId) || idx != lastIndex || !url.equals(lastUrl)
-                    || !pb.mode().equals(lastMode) || !players.containsKey(pid)) {
-                if (lastPlayerId != null) {
-                    var old = players.remove(lastPlayerId);
-                    if (old != null) old.stopPulling();
+            // 创建/重建 MpvPlayer：无播放器 或 该 pid 自己的 URL/index/mode 变更时（per-pid 缓存）
+            PlayerKey key = new PlayerKey(idx, url, pb.mode());
+            MpvPlayer existing = players.get(pid);
+            if (existing == null || !key.equals(playerKeys.get(pid))) {
+                if (existing != null) {
+                    players.remove(pid);
+                    existing.stopPulling();
                 }
                 try {
                     MpvPlayer mp = new MpvPlayer(url);
@@ -308,10 +316,7 @@ public class ClientVideoPlaybackManager {
                     }
                     if (pb.progressSeconds() > 0) mp.seekTo(pb.progressSeconds());
 
-                    lastPlayerId = pid;
-                    lastIndex = idx;
-                    lastUrl = url;
-                    lastMode = pb.mode();
+                    playerKeys.put(pid, key);
                     playbackStartMs.put(pid, System.currentTimeMillis());
                     playbackStartSecs.put(pid, pb.progressSeconds());
                     uvRecalculated.remove(pid);
@@ -478,7 +483,7 @@ public class ClientVideoPlaybackManager {
                 players.remove(e.getKey());
                 playbackStartMs.remove(e.getKey());
                 playbackStartSecs.remove(e.getKey());
-                if (e.getKey().equals(lastPlayerId)) { lastPlayerId = null; lastMode = null; }
+                playerKeys.remove(e.getKey());
             }
         }
     }
@@ -512,7 +517,7 @@ public class ClientVideoPlaybackManager {
         videoFrameSeq.remove(pid);
         playbackStartMs.remove(pid);
         playbackStartSecs.remove(pid);
-        if (pid.equals(lastPlayerId)) { lastPlayerId = null; lastMode = null; }
+        playerKeys.remove(pid);
     }
 
     // ===== 空间音频 =====
@@ -563,6 +568,7 @@ public class ClientVideoPlaybackManager {
     }
 
     public static void stopAll() {
+        System.out.println("[VideoPlayer] stopAll: 销毁 " + players.size() + " 个播放器");
         for (var mp : players.values()) mp.stopPulling();
         players.clear();
         for (var ap : audioPlayers.values()) ap.stop();
@@ -577,8 +583,9 @@ public class ClientVideoPlaybackManager {
         ClientScreenRenderManager.clearAll();
         stopByDistance.clear();
         pauseByDistance.clear();
-        lastPlayerId = null;
-        lastMode = null;
+        playerKeys.clear();
+        // 清空快照缓存：残留的 PLAYING 快照会在重进世界（单机）时被 onTick 重建播放器
+        ClientVideoPlayerCache.clear();
     }
 
     public static void stopLocal(UUID playerId) {

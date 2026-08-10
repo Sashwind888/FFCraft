@@ -55,7 +55,6 @@ public class MpvPlayer {
     private final NativeImage[] targetPool = new NativeImage[TARGET_POOL_SIZE];
     private int targetIndex = 0;
     private int targetW, targetH;
-    private long lastProbeLog;
 
     // 视频参数
     private volatile int videoW, videoH;
@@ -181,11 +180,8 @@ public class MpvPlayer {
     /** mpv 渲染线程回调 — 只设标志位 */
     @SuppressWarnings("unused")
     private void onUpdate(long data) {
-        updateCount++;
         frameReady.set(true);
     }
-
-    private volatile long updateCount;
 
     private String getPropStr(String name) {
         try {
@@ -254,18 +250,6 @@ public class MpvPlayer {
         hasVideo.set(true);
         // 直接入队渲染目标本身（不再克隆：池目标被消费者 close 后会自动重建）
         if (!frameQueue.offer(target)) target.close();
-
-        // 调试：探测像素 + mpv 状态（每 2 秒）
-        long now = System.currentTimeMillis();
-        if (now - lastProbeLog > 2000) {
-            lastProbeLog = now;
-            int px = target.getPixel(fw / 2, fh / 2);
-            System.out.println("[MpvPlayer] probe=0x" + String.format("%08X", px)
-                    + " cb=" + updateCount
-                    + " time=" + getPropDouble("time-pos")
-                    + " vo=" + getPropStr("vo")
-                    + " codec=" + getPropStr("video-params/codec"));
-        }
     }
 
     /** 拉取音频样本（S16 交错）到 audioQueue，供 OpenAlAudioPlayer 做空间音频 */
@@ -326,20 +310,25 @@ public class MpvPlayer {
         NativeImage f;
         while ((f = frameQueue.poll()) != null) f.close();
 
+        // mpv_render_context_free / mpv_audio_render_context_free 必须由创建它们的线程
+        // （渲染线程/主线程）调用 —— render.h: render context 绑定创建线程，跨线程 free
+        // 是未定义行为，mpv 内部会卡住等待 → destroy 线程永远到不了 terminate → 核心未销毁
+        // → 音频持续播放（"退出到主界面还在播放"）。free 本身轻量，主线程调用不卡。
+        if (renderCtx != 0) {
+            try { mpv().mpv_render_context_free(renderCtx); } catch (Exception ignored) {}
+            renderCtx = 0;
+        }
+        if (audioCtx != 0) {
+            try { mpv().mpv_audio_render_context_free(audioCtx); } catch (Exception ignored) {}
+            audioCtx = 0;
+            audioCtxOk = false;
+        }
+
+        // 核心销毁（重活）→ 后台线程。mpv_command_string / mpv_terminate_destroy 线程安全。
+        // 先 quit（优雅退出，核心持锁时排队等待无妨）再 terminate（强制兜底：立即终止核心
+        // 线程/播放链/音频输出，不等网络清理）。
         Thread destroy = new Thread(() -> {
             try { mpv().mpv_command_string(handle, "quit 0"); } catch (Exception ignored) {}
-            // 释放音频渲染上下文
-            if (audioCtx != 0) {
-                try { mpv().mpv_audio_render_context_free(audioCtx); } catch (Exception ignored) {}
-                audioCtx = 0;
-                audioCtxOk = false;
-            }
-            // 释放渲染上下文
-            if (renderCtx != 0) {
-                try { mpv().mpv_render_context_free(renderCtx); } catch (Exception ignored) {}
-                renderCtx = 0;
-            }
-            // 销毁 mpv
             try { mpv().mpv_terminate_destroy(handle); } catch (Exception ignored) {}
             // 清理渲染目标池
             for (int i = 0; i < TARGET_POOL_SIZE; i++) {

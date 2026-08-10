@@ -44,6 +44,12 @@ public final class ClientVideoPlayerCache {
         version++;
     }
 
+    /** 清空缓存（退出服务器/世界时调用）。残留快照会在重进世界时被 onTick 用来重建播放器 */
+    public static void clear() {
+        snapshot = new VideoPlayerSnapshot(java.util.List.of());
+        version++;
+    }
+
     public static void updateProgress(UUID playerId, PlaybackStatus status, int currentIndex, int progressSeconds) {
         List<VideoPlayerData> newPlayers = new ArrayList<>();
         boolean updated = false;
