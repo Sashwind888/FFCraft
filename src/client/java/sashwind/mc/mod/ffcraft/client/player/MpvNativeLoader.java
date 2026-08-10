@@ -657,6 +657,16 @@ public class MpvNativeLoader {
         return false;
     }
 
+    /**
+     * 检查缓存文件是否存在并尝试加载（每次打开安装界面/控制面板浮层时调用）。
+     * 覆盖：手动放置 DLL、上次下载完成但加载失败后文件其实有效等场景。
+     * 已加载时直接返回 true。
+     */
+    public static boolean tryLoadExisting() {
+        if (mpv != null) { state = State.LOADED; return true; }
+        return loadFromCache();
+    }
+
     private static boolean loadFromCache() {
         Path libPath = getLibPath();
         if (Files.exists(libPath)) {

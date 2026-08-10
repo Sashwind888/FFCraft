@@ -42,6 +42,12 @@ public class MpvInstallScreen extends Screen {
 
     @Override
     protected void init() {
+        // 每次打开界面检查文件是否存在：存在则直接加载并关闭，不显示下载界面
+        // （覆盖手动放置 DLL / 上次下载完成后加载失败但文件有效等场景）
+        if (!MpvNativeLoader.isLoaded() && MpvNativeLoader.tryLoadExisting()) {
+            Minecraft.getInstance().execute(this::closeScreen);
+            return;
+        }
         boxX = (this.width - boxW) / 2;
         boxY = (this.height - boxH) / 2;
 

@@ -76,8 +76,10 @@ public class FFCraftClient implements ClientModInitializer {
             return;
         }
 
-        MpvInstallScreen.markShown();
+        // 弹屏成功后才标记：若 setScreenCompat 失败/被跳过，下次 TitleScreen init 会重试，
+        // 否则已标记会导致"启动时安装界面不出现"的问题
         lib.setScreenCompat(client, new MpvInstallScreen());
+        MpvInstallScreen.markShown();
     }
 
     KeyMapping.Category CATEGORY = KeyMapping.Category.register(

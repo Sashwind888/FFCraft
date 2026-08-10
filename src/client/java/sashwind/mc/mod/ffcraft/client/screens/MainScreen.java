@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
 import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader;
+import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader.State;
 import sashwind.mc.mod.ffcraft.client.player.MpvPlayer;
 import sashwind.mc.mod.ffcraft.client.player.Player;
 import sashwind.mc.mod.ffcraft.client.state.ClientScreenCreationManager;
@@ -253,20 +254,26 @@ public class MainScreen extends Screen {
 
     // ==================== 字段 ====================
 
-    private static boolean mpvPromptShown = false;
+    private boolean mpvPromptShown = false; // 实例字段：每次打开控制面板都重新检查
     private boolean showMpvPrompt = false;
     private Button mpvDownloadBtn, mpvManualBtn, mpvDismissBtn;
     private boolean mpvDownloading;
     private volatile int mpvProgress; // 下载线程回调直接写入
+    // 浮层镜像下拉
+    private boolean mirrorMenuOpen;
+    private int mirrorBoxX, mirrorBoxW = 260, mirrorRowY;
 
     @Override
     public void tick() {
         super.tick();
-        // 首次打开控制面板时 libmpv 未安装 → 显示内嵌提示
-        if (!mpvPromptShown && !MpvPlayer.isAvailable()
-                && MpvNativeLoader.getState() == MpvNativeLoader.State.NOT_INSTALLED) {
-            mpvPromptShown = true;
-            showMpvPrompt = true;
+        // 每次打开控制面板检查 libmpv：未加载且未安装/加载失败 → 先看文件是否已存在
+        // （存在则直接加载，覆盖手动放置 DLL / 上次残留），否则显示内嵌提示
+        if (!mpvPromptShown && !MpvPlayer.isAvailable()) {
+            State st = MpvNativeLoader.getState();
+            if (st == State.NOT_INSTALLED || st == State.FAILED) {
+                mpvPromptShown = true;
+                if (!MpvNativeLoader.tryLoadExisting()) showMpvPrompt = true;
+            }
         }
         if (mpvDownloading) {
             mpvProgress = MpvNativeLoader.getDownloadProgress();
@@ -388,10 +395,44 @@ public class MainScreen extends Screen {
 
         // 进度条（下载中）
         if (mpvDownloading) {
-            int pbX = cx + 30, pbW = cw - 60, pbY = cy + 98, pbH = 8;
+            int pbX = cx + 30, pbW = cw - 60, pbY = cy + 104, pbH = 8;
             graphics.fill(pbX, pbY, pbX + pbW, pbY + pbH, 0xFF222222);
             graphics.fill(pbX, pbY, pbX + (int)(pbW * mpvProgress / 100f), pbY + pbH, 0xFF44AA44);
             drawRect(graphics, pbX, pbY, pbW, pbH, 0xFF555555);
+        }
+
+        // 操作按钮（手绘在面板之上——widget 按钮在 super 里先渲染，会被本层遮罩/面板盖住）
+        int bw = 90, bx = (this.width - bw * 3 - 16) / 2, by = mpvBoxY + 130;
+        drawUniBtn(graphics, bx, by, bw, 20, mpvOverlayLabel("download"), mouseX, mouseY);
+        drawUniBtn(graphics, bx + bw + 8, by, bw, 20, mpvOverlayLabel("manual"), mouseX, mouseY);
+        drawUniBtn(graphics, bx + bw * 2 + 16, by, bw, 20, mpvOverlayLabel("dismiss"), mouseX, mouseY);
+
+        // 镜像下拉（最后渲染置顶，展开的选项列表盖住下方按钮，与 MpvInstallScreen 一致）
+        mirrorRowY = cy + 84;
+        mirrorBoxX = (this.width - mirrorBoxW) / 2;
+        String curMirror = MpvNativeLoader.getMirrorName(MpvNativeLoader.getSelectedMirror());
+        String boxText = tx("key.screens.mpvinstall.mirror") + ": " + curMirror;
+        boolean hovBox = inRect(mouseX, mouseY, mirrorBoxX, mirrorRowY, mirrorBoxW, 16);
+        graphics.fill(mirrorBoxX, mirrorRowY, mirrorBoxX + mirrorBoxW, mirrorRowY + 16,
+                hovBox || mirrorMenuOpen ? 0xFF444455 : 0xFF222233);
+        drawRect(graphics, mirrorBoxX, mirrorRowY, mirrorBoxW, 16, 0xFF555577);
+        graphics.text(this.font, boxText, mirrorBoxX + (mirrorBoxW - this.font.width(boxText)) / 2,
+                mirrorRowY + 2, 0xFFEEEEEE);
+        graphics.text(this.font, mirrorMenuOpen ? "▲" : "▼",
+                mirrorBoxX + mirrorBoxW - 12, mirrorRowY + 2, 0xFFAAAAAA);
+
+        if (mirrorMenuOpen) {
+            int sel = MpvNativeLoader.getSelectedMirror();
+            int count = MpvNativeLoader.getMirrorCount();
+            for (int i = 0; i < count; i++) {
+                int oy = mirrorRowY + 16 + i * 16;
+                boolean oh = inRect(mouseX, mouseY, mirrorBoxX, oy, mirrorBoxW, 16);
+                graphics.fill(mirrorBoxX, oy, mirrorBoxX + mirrorBoxW, oy + 16,
+                        oh ? 0xFF444466 : 0xFF2A2A3E);
+                if (i == sel) drawRect(graphics, mirrorBoxX, oy, mirrorBoxW, 16, 0xFF55AA55);
+                graphics.text(this.font, MpvNativeLoader.getMirrorName(i),
+                        mirrorBoxX + 8, oy + 2, i == sel ? 0xFF55FF55 : 0xFFCCCCCC);
+            }
         }
     }
 
@@ -628,8 +669,25 @@ public class MainScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int mx = (int) event.x(), my = (int) event.y();
 
-        // mpv 浮层可见时，拦截所有点击，仅透传给浮层按钮
+        // mpv 浮层可见时，拦截所有点击，仅透传给浮层按钮/镜像下拉
         if (showMpvPrompt) {
+            // 镜像下拉：点击框体展开/收起
+            if (inRect(mx, my, mirrorBoxX, mirrorRowY, mirrorBoxW, 16)) {
+                mirrorMenuOpen = !mirrorMenuOpen;
+                return true;
+            }
+            if (mirrorMenuOpen) {
+                int count = MpvNativeLoader.getMirrorCount();
+                for (int i = 0; i < count; i++) {
+                    int oy = mirrorRowY + 16 + i * 16;
+                    if (inRect(mx, my, mirrorBoxX, oy, mirrorBoxW, 16)) {
+                        MpvNativeLoader.setSelectedMirror(i);
+                        mirrorMenuOpen = false;
+                        return true;
+                    }
+                }
+                mirrorMenuOpen = false; // 点选项外部 → 收起（不拦截，继续走按钮命中）
+            }
             if (mpvDownloadBtn.visible && mpvDownloadBtn.isMouseOver(mx, my)) return mpvDownloadBtn.mouseClicked(event, doubleClick);
             if (mpvManualBtn.visible   && mpvManualBtn.isMouseOver(mx, my))   return mpvManualBtn.mouseClicked(event, doubleClick);
             if (mpvDismissBtn.visible  && mpvDismissBtn.isMouseOver(mx, my))  return mpvDismissBtn.mouseClicked(event, doubleClick);
