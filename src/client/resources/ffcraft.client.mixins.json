@@ -4,6 +4,7 @@
   "package": "sashwind.mc.mod.ffcraft.mixin.client",
   "compatibilityLevel": "JAVA_25",
   "client": [
+    "EditBoxMixin",
     "GameRendererMixin",
     "TitleScreenMixin"
   ],

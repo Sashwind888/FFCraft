@@ -340,6 +340,7 @@ public class MainScreen extends Screen {
         // 左侧面板
         leftPanel.render(graphics, this.font, mouseX, mouseY, cachedPlayers, this.height);
         syncRenameInput();
+        syncValueEditBox();
 
         // === 右侧面板：Area 负责 scissor + 滚动 + 滚动条，TabContentWidget 负责内容 ===
         if (hasSelectedPlayer() && rightPaneArea != null) {
@@ -706,6 +707,15 @@ public class MainScreen extends Screen {
         boolean clickOnRename = renameActive && mx >= renameX && mx <= renameX + renameW
                 && my >= renameY && my <= renameY + renameH;
 
+        // 数值编辑输入框可见时，点击在其范围内交由 EditBox 处理；点击外部则确认修改
+        boolean valueActive = sliderEditMode != null && valueEditBox.isVisible();
+        boolean clickOnValue = valueActive && inRect(mx, my, valueEditBox.getX(), valueEditBox.getY(), valueEditBox.getWidth(), valueEditBox.getHeight());
+        if (clickOnValue) {
+            return super.mouseClicked(event, doubleClick);
+        } else if (valueActive) {
+            confirmSliderEdit();
+        }
+
         // 左侧面板（重命名编辑框激活时跳过，避免点击编辑框触发列表取消重命名）
         if (!clickOnRename) {
             if (doubleClick && leftPanel.mouseDoubleClicked(mx, my, cachedPlayers)) return true;
@@ -876,7 +886,7 @@ public class MainScreen extends Screen {
         if (k == GLFW.GLFW_KEY_ESCAPE && valueEditBox.isVisible()) { cancelSliderEdit(); return true; }
         if (k == GLFW.GLFW_KEY_ENTER && leftPanel.isRenameInputVisible()) { confirmRename(); return true; }
         if (k == GLFW.GLFW_KEY_ESCAPE && leftPanel.isRenameInputVisible())
-        { leftPanel.cancelRename(); renameInput.visible = false; renameInputInitialized = false; return true; }
+        { leftPanel.cancelRename(); renameInput.visible = false; renameInputInitialized = false; resetEditBox(renameInput); return true; }
         if (k == GLFW.GLFW_KEY_SPACE && activeTab == 0 && hasSelectedPlayer()
                 && !valueEditBox.isVisible() && !renameInput.isVisible()) { togglePlayPause(); return true; }
         if (k == GLFW.GLFW_KEY_S && ctrlDown() && activeTab == 2 && hasSelectedPlayer() && hasSelectedScreen())
@@ -950,6 +960,7 @@ public class MainScreen extends Screen {
         }
         renameInput.visible = false;
         renameInputInitialized = false;
+        resetEditBox(renameInput);
     }
 
     // ==================== 滑块交互（屏幕设置） ====================
@@ -987,14 +998,38 @@ public class MainScreen extends Screen {
         }
     }
 
+    private void syncValueEditBox() {
+        if (sliderEditMode != null && activeTab == 2 && hasSelectedScreen()) {
+            int idx = Arrays.asList(SLIDER_KEYS).indexOf(sliderEditMode);
+            if (idx >= 0) {
+                int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
+                int screenY = sy - (rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0);
+                valueEditBox.visible = true;
+                valueEditBox.setX(scrSliderX);
+                valueEditBox.setY(screenY);
+                valueEditBox.setWidth(scrSliderW);
+                valueEditBox.setHeight(SLIDER_H);
+                return;
+            }
+        }
+        if (valueEditBox.isVisible()) {
+            valueEditBox.visible = false;
+        }
+    }
+
     private void startSliderEdit(String k) {
         sliderEditMode = k;
         int idx = Arrays.asList(SLIDER_KEYS).indexOf(k);
         int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
+        int screenY = sy - (rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0);
         valueEditBox.visible = true;
-        valueEditBox.setX(scrSliderX); valueEditBox.setY(sy); valueEditBox.setWidth(scrSliderW);
+        valueEditBox.setX(scrSliderX);
+        valueEditBox.setY(screenY);
+        valueEditBox.setWidth(scrSliderW);
+        valueEditBox.setHeight(SLIDER_H);
         valueEditBox.setValue(String.format("%.2f", getSliderVal(k)));
-        setFocused(valueEditBox); valueEditBox.setFocused(true);
+        setFocused(valueEditBox);
+        valueEditBox.setFocused(true);
     }
 
     private void confirmSliderEdit() {
@@ -1005,9 +1040,10 @@ public class MainScreen extends Screen {
             setSliderVal(sliderEditMode, v); uvEditor.markEdited(); saveUV();
         } catch (NumberFormatException ignored) {}
         valueEditBox.visible = false; sliderEditMode = null;
+        resetEditBox(valueEditBox);
     }
 
-    private void cancelSliderEdit() { valueEditBox.visible = false; sliderEditMode = null; }
+    private void cancelSliderEdit() { valueEditBox.visible = false; sliderEditMode = null; resetEditBox(valueEditBox); }
 
     private void updateScreenSliderFromMouse(int mx) {
         if (sliderDragging == null) return;
@@ -1106,8 +1142,14 @@ public class MainScreen extends Screen {
         if (!url.isEmpty() && hasSelectedPlayer()) {
             // 使用原始分辨率（0, 0, 0 → 服务端自动检测）
             VideoPlayerClientNetworking.addVideoToPlaylist(getSelectedPlayer().id(), url, 0, 0, 0);
-            urlInput.setValue("");
+            resetEditBox(urlInput);
         }
+    }
+
+    private void resetEditBox(EditBox editBox) {
+        if (editBox == null) return;
+        editBox.setValue("");
+        editBox.moveCursorToStart(false);
     }
     private void deleteSelectedVideo() {
         if (hasSelectedPlayer() && selectedVideoIndex >= 0 && selectedVideoIndex < getSelectedPlayer().playlist().size()) {
