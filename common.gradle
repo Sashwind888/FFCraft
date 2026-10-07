@@ -1,0 +1,126 @@
+apply plugin: 'net.fabricmc.fabric-loom'
+apply plugin: 'maven-publish'
+
+version = "${project.mod_version}+${project.minecraft_version}"
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "ffcraft" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+fabricApi {
+    configureDataGeneration {
+        client = true
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs += [rootProject.file('common/src/main/java')]
+        resources.srcDirs += [rootProject.file('common/src/main/resources')]
+    }
+    client {
+        java.srcDirs += [rootProject.file('common/src/client/java')]
+        resources.srcDirs += [rootProject.file('common/src/client/resources')]
+    }
+}
+
+repositories {
+    flatDir {
+        dirs "${rootDir}/libs"
+    }
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // JNA — libmpv 绑定
+    implementation 'net.java.dev.jna:jna:5.14.0'
+    include 'net.java.dev.jna:jna:5.14.0'
+
+    // Apache Commons Compress — tar.gz / 7z 解压支持
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    include 'org.apache.commons:commons-compress:1.27.1'
+
+    // 多边形三角剖分
+    implementation "io.github.earcut4j:earcut4j:2.2.2"
+    include "io.github.earcut4j:earcut4j:2.2.2"
+
+    // DrawLib 前置渲染库 (针对对应 MC 版本)
+    implementation files("${rootDir}/libs/${project.drawlib_jar}")
+}
+
+processResources {
+    def meta = gradle.ext.modMeta
+    inputs.properties(meta)
+    inputs.property "mod_version", project.version
+    inputs.property "minecraft_dependency", project.minecraft_dependency
+    inputs.property "loader_version", project.loader_version
+
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.template.json") {
+        expand(
+            "mod_id": meta.mod_id,
+            "mod_name": meta.mod_name,
+            "mod_description": meta.mod_description,
+            "mod_license": meta.mod_license,
+            "mod_icon": meta.mod_icon,
+            "mod_authors": meta.getOrDefault("mod_authors", "[]"),
+            "mod_contact": meta.getOrDefault("mod_contact", "{}"),
+            "mod_version": project.version,
+            "minecraft_dependency": project.minecraft_dependency,
+            "loader_version": project.loader_version
+        )
+        name = "fabric.mod.json"
+    }
+}
+
+tasks.named('processResources') {
+    dependsOn rootProject.tasks.named('checkMpvNative')
+}
+
+def targetJavaVersion = 25
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        it.options.release.set(targetJavaVersion)
+    }
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from("${rootDir}/LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}

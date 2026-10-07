@@ -11,6 +11,7 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
+import sashwind.mc.mod.ffcraft.compat.gui.GuiCompat;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
 import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader;
 import sashwind.mc.mod.ffcraft.client.player.MpvNativeLoader.State;
@@ -1169,9 +1170,9 @@ public class MainScreen extends Screen {
     }
     private void createScreenFor(VideoPlayerData p) {
         if (ClientScreenCreationManager.start(p.id(), p.name() + "-screen")) {
-            sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), null);
+            GuiCompat.openScreen(Minecraft.getInstance(), null);
             Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() ->
-                    sashwind.mc.mod.drawlib.client.lib.setScreenCompat(Minecraft.getInstance(), new MainScreen())));
+                    GuiCompat.openScreen(Minecraft.getInstance(), new MainScreen())));
         }
     }
 

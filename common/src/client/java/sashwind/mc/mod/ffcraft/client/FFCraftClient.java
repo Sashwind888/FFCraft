@@ -20,7 +20,7 @@ import org.lwjgl.system.MemoryUtil;
 import sashwind.mc.mod.ffcraft.FFCraft;
 import sashwind.mc.mod.drawlib.client.TopologyCompat;
 import sashwind.mc.mod.drawlib.client.WorldDraw;
-import sashwind.mc.mod.drawlib.client.lib;
+import sashwind.mc.mod.ffcraft.compat.gui.GuiCompat;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import com.mojang.blaze3d.platform.InputConstants;
 import sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking;
@@ -78,7 +78,7 @@ public class FFCraftClient implements ClientModInitializer {
 
         // 弹屏成功后才标记：若 setScreenCompat 失败/被跳过，下次 TitleScreen init 会重试，
         // 否则已标记会导致"启动时安装界面不出现"的问题
-        lib.setScreenCompat(client, new MpvInstallScreen());
+        GuiCompat.openScreen(client, new MpvInstallScreen());
         MpvInstallScreen.markShown();
     }
 
@@ -152,7 +152,6 @@ public class FFCraftClient implements ClientModInitializer {
             if (wd2 != null) { wd2.close(); wd2 = null; }
             if (wd3 != null) { wd3.close(); wd3 = null; }
             Player.clientStop();
-            lib.cleanupStatics();
             if (pendingBackgroundImage != null) {
                 pendingBackgroundImage.close();
                 pendingBackgroundImage = null;
@@ -177,7 +176,7 @@ public class FFCraftClient implements ClientModInitializer {
 
             while (this.openGuiKey.consumeClick()) {
                 if (client.player != null) {
-                    lib.setScreenCompat(client, new MainScreen());
+                    GuiCompat.openScreen(client, new MainScreen());
                 }
             }
 

@@ -3,7 +3,7 @@ package sashwind.mc.mod.ffcraft.client.screens;
 import net.minecraft.util.Util;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import sashwind.mc.mod.drawlib.client.lib;
+import sashwind.mc.mod.ffcraft.compat.gui.GuiCompat;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
@@ -111,7 +111,7 @@ public class MpvInstallScreen extends Screen {
 
     private void closeScreen() {
         alreadyShown = true;
-        lib.setScreenCompat(Minecraft.getInstance(), null);
+        GuiCompat.openScreen(Minecraft.getInstance(), null);
     }
 
     @Override
