@@ -17,19 +17,5 @@ pluginManagement {
 
 rootProject.name = 'FFCraftMOD'
 
-// ==========================================
-// 统一模组基础展示信息配置 (供 fabric.mod.json 模板替换)
-// 后续若需修改模组ID、名称、描述、图标、许可证等，在此处统一修改即可
-// ==========================================
-gradle.ext.modMeta = [
-    mod_id: "ffcraft",
-    mod_name: "FFCraft",
-    mod_description: "FFCraftMOD",
-    mod_authors: "[]",
-    mod_contact: "{}",
-    mod_license: "unlicense",
-    mod_icon: "assets/ffcraft/icon.png"
-]
-
 include 'v26_1'
 include 'v26_2'

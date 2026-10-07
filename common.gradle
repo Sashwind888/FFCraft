@@ -65,8 +65,11 @@ dependencies {
 }
 
 processResources {
-    def meta = gradle.ext.modMeta
-    inputs.properties(meta)
+    inputs.property "archives_base_name", project.archives_base_name
+    inputs.property "mod_description", project.mod_description
+    inputs.property "mod_authors", project.mod_authors
+    inputs.property "mod_contact", project.mod_contact
+    inputs.property "mod_license", project.mod_license
     inputs.property "mod_version", project.version
     inputs.property "minecraft_dependency", project.minecraft_dependency
     inputs.property "loader_version", project.loader_version
@@ -75,13 +78,11 @@ processResources {
 
     filesMatching("fabric.mod.template.json") {
         expand(
-            "mod_id": meta.mod_id,
-            "mod_name": meta.mod_name,
-            "mod_description": meta.mod_description,
-            "mod_license": meta.mod_license,
-            "mod_icon": meta.mod_icon,
-            "mod_authors": meta.getOrDefault("mod_authors", "[]"),
-            "mod_contact": meta.getOrDefault("mod_contact", "{}"),
+            "archives_base_name": project.archives_base_name,
+            "mod_description": project.mod_description,
+            "mod_license": project.mod_license,
+            "mod_authors": project.mod_authors,
+            "mod_contact": project.mod_contact,
             "mod_version": project.version,
             "minecraft_dependency": project.minecraft_dependency,
             "loader_version": project.loader_version

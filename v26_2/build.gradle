@@ -1,8 +1,1 @@
-ext {
-    minecraft_version = project.v26_2_minecraft_version
-    minecraft_dependency = "26.2.x"
-    fabric_version = project.v26_2_fabric_version
-    drawlib_jar = "DrawLib-1.1+26.2.jar"
-}
-
 apply from: rootProject.file('common.gradle')
