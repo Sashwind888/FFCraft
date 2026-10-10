@@ -2,6 +2,7 @@ package sashwind.mc.mod.ffcraft.client.net;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlaybackManager;
 import sashwind.mc.mod.ffcraft.client.state.ClientVideoPlayerCache;
 import sashwind.mc.mod.ffcraft.common.model.*;
 import sashwind.mc.mod.ffcraft.common.net.NetworkCodec;
@@ -47,7 +48,17 @@ public final class VideoPlayerClientNetworking {
         var pkt = NetworkCodec.decode(json);
         if (pkt == null) return;
         switch (pkt.type()) {
-            case "sync_players" -> ClientVideoPlayerCache.replace(NetworkCodec.parseSyncPlayers(pkt.data()));
+            case "sync_players" -> {
+                var snap = NetworkCodec.parseSyncPlayers(pkt.data());
+                ClientVideoPlayerCache.replace(snap);
+                // 进入游戏首次获取播放器列表或全量同步时，自动校准本地音量滑块状态
+                for (var p : snap.players()) {
+                    if (p.playbackState().status() == PlaybackStatus.PLAYING) {
+                        ClientVideoPlaybackManager.setGlobalVolume(p.playbackState().volume() / 100f);
+                        break;
+                    }
+                }
+            }
             case "update_progress" -> ClientVideoPlayerCache.updateProgress(
                     NetworkCodec.parseUpdateProgressPlayerId(pkt.data()),
                     NetworkCodec.parseUpdateProgressStatus(pkt.data()),
@@ -75,10 +86,11 @@ public final class VideoPlayerClientNetworking {
     public static void updateScreenUv(java.util.UUID pid, java.util.UUID sid, UvTransform uv) { send(NetworkCodec.updateScreenUv(pid, sid, uv, false)); }
     public static void updateScreenUv(java.util.UUID pid, java.util.UUID sid, UvTransform uv, boolean uvManuallyEdited) { send(NetworkCodec.updateScreenUv(pid, sid, uv, uvManuallyEdited)); }
     public static void updateScreenChannel(java.util.UUID pid, java.util.UUID sid, ScreenChannelState ch) { send(NetworkCodec.updateScreenChannel(pid, sid, ch)); }
+    public static void updateScreenRadius(java.util.UUID pid, java.util.UUID sid, double radius) { send(NetworkCodec.updateScreenRadius(pid, sid, radius)); }
     public static void addVideoToPlaylist(java.util.UUID pid, String url, int w, int h, int fps) { send(NetworkCodec.addVideo(pid, url, w, h, fps)); }
     public static void removeVideoFromPlaylist(java.util.UUID pid, int idx) { send(NetworkCodec.removeVideo(pid, idx)); }
     public static void moveVideo(java.util.UUID pid, int from, int to) { send(NetworkCodec.moveVideo(pid, from, to)); }
     public static void createScreen(CreateScreenRequest req) {
-        send(NetworkCodec.createScreen(req.playerId(), req.name(), req.dimension(), req.vertices()));
+        send(NetworkCodec.createScreen(req.playerId(), req.name(), req.dimension(), req.vertices(), req.screenType(), req.radius()));
     }
 }

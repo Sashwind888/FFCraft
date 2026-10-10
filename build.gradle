@@ -27,6 +27,13 @@ tasks.register('buildAll') {
     description = '一次性编译并输出所有 Minecraft 版本的成品 Jar 包'
     dependsOn subprojects.collect { "${it.path}:assemble" }
 
+    doFirst {
+        def outDir = file("${layout.buildDirectory.get().asFile}/libs")
+        if (outDir.exists()) {
+            outDir.deleteDir()
+        }
+    }
+
     doLast {
         def outDir = file("${layout.buildDirectory.get().asFile}/libs")
         outDir.mkdirs()

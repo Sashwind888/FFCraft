@@ -17,6 +17,8 @@
   "key.screens.mainscreen.button.remove_video": "× Remove",
   "key.screens.mainscreen.button.save_uv": "Save UV",
   "key.screens.mainscreen.button.new_screen": "+ New Screen",
+  "key.screens.mainscreen.button.new_polygon": "+ Plane",
+  "key.screens.mainscreen.button.new_sphere": "+ Sphere",
   "key.screens.mainscreen.button.delete_screen": "× Delete Screen",
 
   "key.screens.mainscreen.empty.no_player": "No player, create one first",
@@ -46,6 +48,7 @@
   "key.screens.mainscreen.slider.scale": "Scale",
   "key.screens.mainscreen.slider.offset_u": "Offset U",
   "key.screens.mainscreen.slider.offset_v": "Offset V",
+  "key.screens.mainscreen.slider.radius": "Radius",
 
   "key.screens.mainscreen.flip.horizontal": "Flip H",
   "key.screens.mainscreen.flip.vertical": "Flip V",
@@ -65,6 +68,7 @@
   "key.screens.mainscreen.area.scroll_usage": "Use mouse wheel to scroll",
 
   "key.hud.createplayer.line1": "Creating — LMB cancel, RMB place vertex, click start point to finish",
+  "key.hud.createscreen.sphere_line1": "Creating Sphere Screen: RMB to place bottom point",
   "key.hud.createplayer.vertices_count": "Vertices",
 
   "key.screens.mpvinstall.title": "libmpv Native Library Required",

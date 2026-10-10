@@ -28,8 +28,8 @@ public class Three2Flat {
      *
      */
     public static List<Plane> splitPlanes(List<Vector3d> points, @Nullable List<Double> distances) {
-        int n = points.size();
-        if (n < 3) throw new IllegalArgumentException("至少需要3个点");
+        int n = points != null ? points.size() : 0;
+        if (n < 3) return List.of();
 
         List<Vector3d> pointList = new ArrayList<>(points);
         List<Double> distanceList = distances != null ? new ArrayList<>(distances) : null;

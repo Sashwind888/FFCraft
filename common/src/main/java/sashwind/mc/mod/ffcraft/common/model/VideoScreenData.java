@@ -14,6 +14,20 @@ public record VideoScreenData(
         List<ScreenVertex> vertices,
         UvTransform uvTransform,
         ScreenChannelState channelState,
-        boolean uvManuallyEdited
+        boolean uvManuallyEdited,
+        int screenType,
+        double radius
 ) {
+    public static final int TYPE_POLYGON = 0;
+    public static final int TYPE_SPHERE = 1;
+
+    public VideoScreenData(UUID id, UUID playerId, String name, ResourceKey<Level> dimension,
+                           List<ScreenVertex> vertices, UvTransform uvTransform,
+                           ScreenChannelState channelState, boolean uvManuallyEdited) {
+        this(id, playerId, name, dimension, vertices, uvTransform, channelState, uvManuallyEdited, TYPE_POLYGON, 5.0);
+    }
+
+    public boolean isSphere() {
+        return screenType == TYPE_SPHERE;
+    }
 }

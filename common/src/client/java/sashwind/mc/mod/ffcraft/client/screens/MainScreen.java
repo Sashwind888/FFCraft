@@ -308,6 +308,11 @@ public class MainScreen extends Screen {
     }
 
     private int calcScreenTabH(VideoPlayerData p, int pw) {
+        if (hasSelectedScreen() && getSelectedScreen().isSphere()) {
+            int h = 4 + ENTRY_H * 2 + 4 + 58 + 10 + (SLIDER_H + 4) + 8 + 20 + 28 + 22;
+            if (p.screens().size() > 1) h += ENTRY_H + 6;
+            return h;
+        }
         int uvH = Math.max(100, Math.min(pw * 9 / 16, 200));
         int h = 4 + ENTRY_H * 2 + 4 + uvH + 8 + (SLIDER_H + 4) * 4 + 8 + 20 + 20 + 8 + 22;
         if (p.screens().size() > 1) h += ENTRY_H + 6;
@@ -567,15 +572,21 @@ public class MainScreen extends Screen {
         List<VideoScreenData> screens = player.screens();
         if (screens.isEmpty()) {
             graphics.text(this.font, tx("key.screens.mainscreen.empty.no_screen"), px + 2, py, 0xFF888888);
-            // 空列表也显示“新建屏幕”按钮（否则没有屏幕时创建按钮丢失，无法创建第一个屏幕）
+            // 空列表也显示“新建屏幕”按钮（平面 / 球形）
             scrSaveBtnY = py + 26;
-            drawUniBtn(graphics, px + 76, scrSaveBtnY, 68, 20,
-                    tx("key.screens.mainscreen.button.new_screen"), mouseX, mouseY);
+            drawUniBtn(graphics, px + 62, scrSaveBtnY, 54, 20, tx("key.screens.mainscreen.button.new_polygon"), mouseX, mouseY);
+            drawUniBtn(graphics, px + 120, scrSaveBtnY, 54, 20, tx("key.screens.mainscreen.button.new_sphere"), mouseX, mouseY);
             return;
         }
         if (LeftPanelHelper.selectedScreenIndex < 0 || LeftPanelHelper.selectedScreenIndex >= screens.size())
             LeftPanelHelper.selectedScreenIndex = 0;
         VideoScreenData screen = getSelectedScreen();
+        System.out.printf("[FFCraft GUI] 绘制屏幕设置: name=%s, isSphere=%b, screenType=%d, radius=%.2f%n",
+                screen.name(), screen.isSphere(), screen.screenType(), screen.radius());
+        if (screen.isSphere()) {
+            renderSphereScreenTab(graphics, mouseX, mouseY, player, screen, px, py, pw);
+            return;
+        }
         uvEditor.loadFromScreen(screen);
 
         int curY = py + 4; // 顶部留白
@@ -650,18 +661,91 @@ public class MainScreen extends Screen {
 
         // 操作按钮（跟随内容滚动）
         scrSaveBtnY = curY;
-        drawUniBtn(graphics, px + 4, curY, 68, 20, tx("key.screens.mainscreen.button.save_uv"), mouseX, mouseY);
-        drawUniBtn(graphics, px + 76, curY, 68, 20, tx("key.screens.mainscreen.button.new_screen"), mouseX, mouseY);
-        drawUniBtn(graphics, px + 148, curY, 68, 20, tx("key.screens.mainscreen.button.delete_screen"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 4, curY, 54, 20, tx("key.screens.mainscreen.button.save_uv"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 62, curY, 54, 20, tx("key.screens.mainscreen.button.new_polygon"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 120, curY, 54, 20, tx("key.screens.mainscreen.button.new_sphere"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 178, curY, 54, 20, tx("key.screens.mainscreen.button.delete_screen"), mouseX, mouseY);
+    }
+
+    private void renderSphereScreenTab(GuiGraphicsExtractor graphics, int mouseX, int mouseY,
+                                       VideoPlayerData player, VideoScreenData screen, int px, int py, int pw) {
+        int curY = py + 4;
+        graphics.text(this.font, "🌐 " + screen.name() + " (" + tx("key.screens.mainscreen.button.new_sphere") + ")", px + 2, curY, 0xFF55FFFF);
+
+        String coordStr = "";
+        if (!screen.vertices().isEmpty()) {
+            var bp = screen.vertices().get(0);
+            coordStr = String.format("  ·  底点: (%.1f, %.1f, %.1f)", bp.x(), bp.y(), bp.z());
+        }
+        graphics.text(this.font, screen.dimension().identifier() + coordStr, px + 2, curY + ENTRY_H, 0xFF888888);
+        curY += ENTRY_H * 2 + 4;
+
+        // 屏幕选择器（多屏幕时）
+        List<VideoScreenData> screens = player.screens();
+        if (screens.size() > 1) {
+            for (int i = 0; i < screens.size(); i++) {
+                int sx = px + i * 80;
+                boolean s = (i == LeftPanelHelper.selectedScreenIndex);
+                if (s) graphics.fill(sx, curY, sx + 76, curY + ENTRY_H, 0xFF444444);
+                graphics.text(this.font, (s ? "● " : "○ ") + screens.get(i).name(), sx + 2, curY + 1,
+                        s ? 0xFF55FF55 : 0xFFE0E0E0);
+            }
+            curY += ENTRY_H + 6;
+        }
+
+        // 专属说明面板卡片框
+        int cardH = 58;
+        rectBorder(graphics, px, curY, pw - 4, cardH, 0xFF444466);
+        graphics.fill(px + 1, curY + 1, px + pw - 5, curY + cardH - 1, 0xAA111122);
+        graphics.text(this.font, "3D 32经16纬 球幕沉浸式空间", px + 8, curY + 6, 0xFFFFAA00);
+        graphics.text(this.font, String.format("当前球体半径: %.1f 方块", screen.radius()), px + 8, curY + 24, 0xFF55FF55);
+        graphics.text(this.font, "通过下方滑块调节半径大小与翻转", px + 8, curY + 40, 0xFF888888);
+        curY += cardH + 10;
+
+        // 滑块设置
+        scrSliderBaseY = curY;
+        scrSliderX = px + SLIDER_LABEL_W + 4;
+        scrSliderW = Math.min(pw - SLIDER_LABEL_W - SLIDER_VAL_W - 12, 150);
+
+        curY = renderSliderRow(graphics, px, curY, tx("key.screens.mainscreen.slider.radius"),
+                (float) Math.max(0.0, Math.min(1.0, (screen.radius() - 1.0) / 49.0)),
+                String.format("%.1f", screen.radius()), 0, mouseX, mouseY);
+        curY += 8;
+
+        // 翻转按钮
+        scrFlipBtnY = curY;
+        UvTransform ut = screen.uvTransform();
+        drawUniBtn(graphics, px + 4, curY, 68, 16, (ut.flipU() ? "[✓] " : "") + tx("key.screens.mainscreen.flip.horizontal"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 74, curY, 68, 16, (ut.flipV() ? "[✓] " : "") + tx("key.screens.mainscreen.flip.vertical"), mouseX, mouseY);
+        curY += 20;
+
+        // 声道按钮
+        scrChanBtnY = curY;
+        ScreenChannelState ch = screen.channelState();
+        drawUniBtn(graphics, px + 4, curY, 54, 16, (ch.leftEnabled() ? "[✓] " : "") + tx("key.screens.mainscreen.channel.left"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 62, curY, 54, 16, (ch.rightEnabled() ? "[✓] " : "") + tx("key.screens.mainscreen.channel.right"), mouseX, mouseY);
+        curY += 28;
+
+        // 操作按钮
+        scrSaveBtnY = curY;
+        drawUniBtn(graphics, px + 4, curY, 54, 20, tx("key.screens.mainscreen.button.save_uv"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 62, curY, 54, 20, tx("key.screens.mainscreen.button.new_polygon"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 120, curY, 54, 20, tx("key.screens.mainscreen.button.new_sphere"), mouseX, mouseY);
+        drawUniBtn(graphics, px + 178, curY, 54, 20, tx("key.screens.mainscreen.button.delete_screen"), mouseX, mouseY);
+    }
+
+    private void rectBorder(GuiGraphicsExtractor g, int x, int y, int w, int h, int c) {
+        g.fill(x, y, x + w, y + 1, c); g.fill(x, y + h - 1, x + w, y + h, c);
+        g.fill(x, y, x + 1, y + h, c); g.fill(x + w - 1, y, x + w, y + h, c);
     }
 
     private int renderSliderRow(GuiGraphicsExtractor g, int px, int y, String label,
                                  float frac, String val, int idx, int mx, int my) {
         g.text(this.font, label, px + 2, y + 2, 0xFFE0E0E0);
         g.text(this.font, val, scrSliderX + scrSliderW + 4, y + 2, 0xFFAAAAAA);
-        int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
+        // y 已经包含了 (scrSliderBaseY + idx*(SLIDER_H+4))，my 也是传入的内容空间 Y（或经 translate 后的 Y）
         boolean hov = sliderEditMode == null && sliderDragging == null
-                && mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= sy && my <= sy + SLIDER_H;
+                && mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= y && my <= y + SLIDER_H;
         renderSlider(g, scrSliderX, y, scrSliderW, SLIDER_H, frac, null, hov);
         return y + SLIDER_H + 4;
     }
@@ -768,26 +852,62 @@ public class MainScreen extends Screen {
 
         // --- 屏幕设置页签 ---
         if (activeTab == 2) {
-            // 空列表：只支持“新建屏幕”（按钮丢失修复——没有屏幕时无法创建第一个屏幕）
+            // 空列表：支持创建平面屏或球形屏
             if (!hasSelectedScreen()) {
-                if (inRect(mx, pmy, rp + 76, scrSaveBtnY, 68, 20) && hasSelectedPlayer())
-                    createScreenFor(getSelectedPlayer());
+                if (inRect(mx, pmy, rp + 62, scrSaveBtnY, 54, 20) && hasSelectedPlayer())
+                    createScreenFor(getSelectedPlayer(), 0, 5.0);
+                if (inRect(mx, pmy, rp + 120, scrSaveBtnY, 54, 20) && hasSelectedPlayer())
+                    createScreenFor(getSelectedPlayer(), 1, 5.0);
                 return super.mouseClicked(event, doubleClick);
             }
-            if (event.button() == 2 && uvEditor.isInUVArea(mx, pmy))
-            { panningUV = true; dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
-            if (doubleClick) { String s = hitSlidAt(mx, pmy); if (s != null) { startSliderEdit(s); return true; } }
-            String s = hitSlidAt(mx, pmy);
-            if (s != null) { sliderDragging = s; return true; }
-            if (uvEditor.mouseClicked(mx, pmy, getSelectedScreen()))
-            { dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
-
-            if (inRect(mx, pmy, rp + 4, scrFlipBtnY, 70, 16))
-            { uvEditor.uvFlipU = !uvEditor.uvFlipU; uvEditor.markEdited(); saveUV(); return true; }
-            if (inRect(mx, pmy, rp + 78, scrFlipBtnY, 70, 16))
-            { uvEditor.uvFlipV = !uvEditor.uvFlipV; uvEditor.markEdited(); saveUV(); return true; }
 
             VideoScreenData screen = getSelectedScreen();
+            if (!screen.isSphere()) {
+                if (event.button() == 2 && uvEditor.isInUVArea(mx, pmy))
+                { panningUV = true; dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
+            }
+            if (doubleClick) {
+                String s = hitSlidAt(mx, pmy);
+                System.out.printf("[FFCraft GUI] 双击检测: mx=%d, pmy=%d, hit=%s, scrSliderBaseY=%d, scrSliderX=%d, scrSliderW=%d%n",
+                        mx, pmy, s, scrSliderBaseY, scrSliderX, scrSliderW);
+                if (s != null) { startSliderEdit(s); return true; }
+            }
+            String s = hitSlidAt(mx, pmy);
+            if (s != null) {
+                sliderDragging = s;
+                System.out.printf("[FFCraft GUI] 滑块开始拖拽: key=%s, mx=%d, pmy=%d%n", s, mx, pmy);
+                updateScreenSliderFromMouse(mx);
+                return true;
+            }
+
+            if (!screen.isSphere()) {
+                if (uvEditor.mouseClicked(mx, pmy, screen))
+                { dragLockedScroll = rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0; return true; }
+            }
+
+            int flipBW = screen.isSphere() ? 68 : 70;
+            int flipGap = screen.isSphere() ? 74 : 78;
+            if (inRect(mx, pmy, rp + 4, scrFlipBtnY, flipBW, 16)) {
+                if (screen.isSphere()) {
+                    UvTransform ut = screen.uvTransform();
+                    VideoPlayerClientNetworking.updateScreenUv(getSelectedPlayer().id(), screen.id(),
+                            new UvTransform(ut.offsetU(), ut.offsetV(), ut.scaleU(), ut.scaleV(), ut.rotationDegrees(), !ut.flipU(), ut.flipV(), ut.is3D()), true);
+                } else {
+                    uvEditor.uvFlipU = !uvEditor.uvFlipU; uvEditor.markEdited(); saveUV();
+                }
+                return true;
+            }
+            if (inRect(mx, pmy, rp + flipGap, scrFlipBtnY, flipBW, 16)) {
+                if (screen.isSphere()) {
+                    UvTransform ut = screen.uvTransform();
+                    VideoPlayerClientNetworking.updateScreenUv(getSelectedPlayer().id(), screen.id(),
+                            new UvTransform(ut.offsetU(), ut.offsetV(), ut.scaleU(), ut.scaleV(), ut.rotationDegrees(), ut.flipU(), !ut.flipV(), ut.is3D()), true);
+                } else {
+                    uvEditor.uvFlipV = !uvEditor.uvFlipV; uvEditor.markEdited(); saveUV();
+                }
+                return true;
+            }
+
             ScreenChannelState ch = screen.channelState();
             if (inRect(mx, pmy, rp + 4, scrChanBtnY, 54, 16)) {
                 VideoPlayerClientNetworking.updateScreenChannel(getSelectedPlayer().id(), screen.id(),
@@ -804,17 +924,24 @@ public class MainScreen extends Screen {
                 int selY = rightPaneY + ENTRY_H * 2 + 4 + 4;
                 for (int i = 0; i < screens.size(); i++) {
                     int sx = rp + i * 80;
-                    if (mx >= sx && mx <= sx + 76 && pmy >= selY && pmy <= selY + ENTRY_H)
-                    { LeftPanelHelper.selectedScreenIndex = i; return true; }
+                    if (mx >= sx && mx <= sx + 76 && pmy >= selY && pmy <= selY + ENTRY_H) {
+                        LeftPanelHelper.selectedScreenIndex = i;
+                        cancelSliderEdit();
+                        rebuildTabContent();
+                        return true;
+                    }
                 }
             }
 
             // 操作按钮
-            if (inRect(mx, pmy, rp + 4, scrSaveBtnY, 68, 20)) { saveUV(); return true; }
-            if (inRect(mx, pmy, rp + 76, scrSaveBtnY, 68, 20)) {
-                if (hasSelectedPlayer()) createScreenFor(getSelectedPlayer()); return true;
+            if (inRect(mx, pmy, rp + 4, scrSaveBtnY, 54, 20)) { saveUV(); return true; }
+            if (inRect(mx, pmy, rp + 62, scrSaveBtnY, 54, 20)) {
+                if (hasSelectedPlayer()) createScreenFor(getSelectedPlayer(), 0, 5.0); return true;
             }
-            if (inRect(mx, pmy, rp + 148, scrSaveBtnY, 68, 20)) {
+            if (inRect(mx, pmy, rp + 120, scrSaveBtnY, 54, 20)) {
+                if (hasSelectedPlayer()) createScreenFor(getSelectedPlayer(), 1, 5.0); return true;
+            }
+            if (inRect(mx, pmy, rp + 178, scrSaveBtnY, 54, 20)) {
                 if (hasSelectedPlayer() && hasSelectedScreen()) {
                     VideoPlayerClientNetworking.deleteScreen(getSelectedPlayer().id(), getSelectedScreen().id());
                     LeftPanelHelper.selectedScreenIndex = -1;
@@ -833,6 +960,7 @@ public class MainScreen extends Screen {
 
         if (seekBar.dragging && hasSelectedPlayer()) { seekBar.finishDrag(getSelectedPlayer().id()); sliderDragging = null; return true; }
         if ("volume".equals(sliderDragging)) { sliderDragging = null; return true; }
+        if ("radius".equals(sliderDragging)) { sliderDragging = null; return true; }
         if (sliderDragging != null) { sliderDragging = null; uvEditor.markEdited(); saveUV(); return true; }
         if (uvEditor.isEditing()) { uvEditor.finishDrag(); dragLockedScroll = 0; saveUV(); return true; }
         if (panningUV) { panningUV = false; dragLockedScroll = 0; return true; }
@@ -841,13 +969,16 @@ public class MainScreen extends Screen {
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dx, double dy) {
-        // Area 滚动条拖拽
-        if (rightPaneArea != null && rightPaneArea.mouseDragged(event, dx, dy)) return true;
-
         int mx = (int) event.x();
+
+        // 优先处理正在拖动的滑块 / 进度条（避免 Area 滚动条误抢）
         if (seekBar.dragging) { seekBar.updateDrag(mx); return true; }
         if ("volume".equals(sliderDragging)) { updateVolumeFromMouse(mx); return true; }
         if (sliderDragging != null) { updateScreenSliderFromMouse(mx); return true; }
+
+        // Area 滚动条拖拽
+        if (rightPaneArea != null && rightPaneArea.mouseDragged(event, dx, dy)) return true;
+
         if (uvEditor.isEditing()) { uvEditor.mouseDragged(mx, (int) event.y() + dragLockedScroll); return true; }
         if (panningUV) { uvEditor.panDrag(mx, (int) event.y() + dragLockedScroll, dx, dy); return true; }
         return super.mouseDragged(event, dx, dy);
@@ -868,8 +999,8 @@ public class MainScreen extends Screen {
             return true;
         }
 
-        // UV 缩放
-        if (activeTab == 2 && uvEditor.zoomWheel(mx, scrollAdjY(my), sy)) return true;
+        // UV 缩放 (仅当不是球形屏幕且在 UV 区域内才响应)
+        if (activeTab == 2 && hasSelectedScreen() && !getSelectedScreen().isSphere() && uvEditor.zoomWheel(mx, scrollAdjY(my), sy)) return true;
 
         // Area 外层滚动（仅内容超出时才消费事件）
         if (rightPaneArea != null && rightPaneArea.mouseScrolled(mouseX, mouseY, sx, sy)) return true;
@@ -965,10 +1096,15 @@ public class MainScreen extends Screen {
     }
 
     // ==================== 滑块交互（屏幕设置） ====================
-    private static final String[] SLIDER_KEYS = {"rotation", "scale", "offsetU", "offsetV"};
+    private static final String[] SLIDER_KEYS = {"rotation", "scale", "offsetU", "offsetV", "radius"};
 
     private String hitSlidAt(int mx, int my) {
-        for (int i = 0; i < SLIDER_KEYS.length; i++) {
+        if (hasSelectedScreen() && getSelectedScreen().isSphere()) {
+            if (mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= scrSliderBaseY && my <= scrSliderBaseY + SLIDER_H)
+                return "radius";
+            return null;
+        }
+        for (int i = 0; i < 4; i++) {
             int sy = scrSliderBaseY + i * (SLIDER_H + 4);
             if (mx >= scrSliderX && mx <= scrSliderX + scrSliderW && my >= sy && my <= sy + SLIDER_H)
                 return SLIDER_KEYS[i];
@@ -982,6 +1118,7 @@ public class MainScreen extends Screen {
             case "scale" -> uvEditor.uvScaleU;
             case "offsetU" -> uvEditor.uvOffsetX;
             case "offsetV" -> uvEditor.uvOffsetY;
+            case "radius" -> hasSelectedScreen() ? (float) getSelectedScreen().radius() : 5.0f;
             default -> 0f;
         };
     }
@@ -996,12 +1133,20 @@ public class MainScreen extends Screen {
             }
             case "offsetU" -> uvEditor.uvOffsetX = v;
             case "offsetV" -> uvEditor.uvOffsetY = v;
+            case "radius" -> {
+                if (hasSelectedPlayer() && hasSelectedScreen()) {
+                    double rad = Math.max(0.5, Math.min(50.0, v));
+                    System.out.printf("[FFCraft GUI] 确认手动输入半径: %.2f (发送网络包)%n", rad);
+                    VideoPlayerClientNetworking.updateScreenRadius(getSelectedPlayer().id(), getSelectedScreen().id(), rad);
+                }
+            }
         }
     }
 
     private void syncValueEditBox() {
         if (sliderEditMode != null && activeTab == 2 && hasSelectedScreen()) {
-            int idx = Arrays.asList(SLIDER_KEYS).indexOf(sliderEditMode);
+            boolean isSph = getSelectedScreen().isSphere();
+            int idx = isSph ? 0 : Arrays.asList(SLIDER_KEYS).indexOf(sliderEditMode);
             if (idx >= 0) {
                 int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
                 int screenY = sy - (rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0);
@@ -1020,7 +1165,8 @@ public class MainScreen extends Screen {
 
     private void startSliderEdit(String k) {
         sliderEditMode = k;
-        int idx = Arrays.asList(SLIDER_KEYS).indexOf(k);
+        boolean isSph = hasSelectedScreen() && getSelectedScreen().isSphere();
+        int idx = isSph ? 0 : Arrays.asList(SLIDER_KEYS).indexOf(k);
         int sy = scrSliderBaseY + idx * (SLIDER_H + 4);
         int screenY = sy - (rightPaneArea != null ? rightPaneArea.getScrollOffset() : 0);
         valueEditBox.visible = true;
@@ -1038,7 +1184,10 @@ public class MainScreen extends Screen {
         try {
             float v = Float.parseFloat(valueEditBox.getValue().trim());
             if ("scale".equals(sliderEditMode) && v <= 0) v = 0.01f;
-            setSliderVal(sliderEditMode, v); uvEditor.markEdited(); saveUV();
+            setSliderVal(sliderEditMode, v);
+            if (!"radius".equals(sliderEditMode)) {
+                uvEditor.markEdited(); saveUV();
+            }
         } catch (NumberFormatException ignored) {}
         valueEditBox.visible = false; sliderEditMode = null;
         resetEditBox(valueEditBox);
@@ -1062,6 +1211,13 @@ public class MainScreen extends Screen {
             }
             case "offsetU" -> uvEditor.uvOffsetX = -500 + f * 1000;
             case "offsetV" -> uvEditor.uvOffsetY = -500 + f * 1000;
+            case "radius" -> {
+                if (hasSelectedPlayer() && hasSelectedScreen()) {
+                    double newRadius = Math.max(0.5, Math.min(50.0, 1.0 + f * 49.0));
+                    System.out.printf("[FFCraft GUI] 鼠标拖拽更新半径: f=%.3f, newRadius=%.2f%n", f, newRadius);
+                    VideoPlayerClientNetworking.updateScreenRadius(getSelectedPlayer().id(), getSelectedScreen().id(), newRadius);
+                }
+            }
         }
     }
 
@@ -1169,7 +1325,10 @@ public class MainScreen extends Screen {
         uvEditor.markEdited();
     }
     private void createScreenFor(VideoPlayerData p) {
-        if (ClientScreenCreationManager.start(p.id(), p.name() + "-screen")) {
+        createScreenFor(p, 0, 5.0);
+    }
+    private void createScreenFor(VideoPlayerData p, int screenType, double radius) {
+        if (ClientScreenCreationManager.start(p.id(), p.name() + (screenType == 1 ? "-sphere" : "-screen"), screenType, radius)) {
             GuiCompat.openScreen(Minecraft.getInstance(), null);
             Player.startVertexPlacement(() -> Minecraft.getInstance().execute(() ->
                     GuiCompat.openScreen(Minecraft.getInstance(), new MainScreen())));

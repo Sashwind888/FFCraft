@@ -316,6 +316,10 @@ public class ClientVideoPlaybackManager {
                     }
                     if (pb.progressSeconds() > 0) mp.seekTo(pb.progressSeconds());
 
+                    // 【自动音量校准与同步】：创建/重建播放器时立即用该播放器配置的音量重置本地音量状态
+                    float targetVol = pb.volume() / 100f;
+                    setGlobalVolume(targetVol);
+
                     playerKeys.put(pid, key);
                     playbackStartMs.put(pid, System.currentTimeMillis());
                     playbackStartSecs.put(pid, pb.progressSeconds());
@@ -534,6 +538,50 @@ public class ClientVideoPlaybackManager {
         var sc = player.screens().get(0);
         if (sc.vertices().isEmpty()) return;
 
+        // 【3D 球形屏幕专属音频处理】
+        if (sc.isSphere()) {
+            var bp = sc.vertices().get(0);
+            double r = sc.radius();
+            double cx = bp.x();
+            double cy = bp.y() + r; // 球心在底点上方半径处
+            double cz = bp.z();
+
+            double dx = cam.getX() - cx;
+            double dy = cam.getEyeY() - cy;
+            double dz = cam.getZ() - cz;
+            double distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            var ch = sc.channelState();
+            float leftFactor = ch.leftEnabled() ? 1f : 0f;
+            float rightFactor = ch.rightEnabled() ? 1f : 0f;
+            float u = currentVolume;
+
+            // 如果玩家在球体内部（距离球心 <= 半径）：全方位沉浸包裹，使用最大音量，无视衰减与方向单侧平衡
+            if (distToCenter <= r) {
+                float maxL = u * leftFactor;
+                float maxR = u * rightFactor;
+                if (ap != null) ap.setSpatialVolumes(maxL, maxR);
+                else mp.setSpatialFallback(maxL, maxR);
+                return;
+            }
+
+            // 如果玩家在球体外部：根据到球体表面的距离进行平滑自然衰减
+            double distToSurface = distToCenter - r;
+            float distVol = (float) Math.clamp(1.0 / Math.max(1, distToSurface / 16.0), 0, 1);
+
+            var look = cam.getLookAngle();
+            var right = new net.minecraft.world.phys.Vec3(-look.z, 0, look.x).normalize();
+            var toScr = new net.minecraft.world.phys.Vec3(cx - cam.getX(), 0, cz - cam.getZ()).normalize();
+            float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
+
+            float lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
+            float rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
+
+            if (ap != null) ap.setSpatialVolumes(lVol, rVol);
+            else mp.setSpatialFallback(lVol, rVol);
+            return;
+        }
+
         // ① 屏幕中心点
         double cx = 0, cy = 0, cz = 0;
         for (var v : sc.vertices()) { cx += v.x(); cy += v.y(); cz += v.z(); }
@@ -602,6 +650,7 @@ public class ClientVideoPlaybackManager {
 
     private static void recalcUvForVideo(UUID pid, VideoPlayerData player, double videoAspect) {
         for (var sd : player.screens()) {
+            if (sd.isSphere()) continue; // 球形屏幕固定满幅贴图，无需计算视频宽高比
             if (sd.uvManuallyEdited() || uvManuallyEdited.getOrDefault(sd.id(), false)) continue;
             // 屏幕宽高比必须在 UV 坐标系下测量（u 轴 = 首条边，与渲染端 Plane 一致）。
             // 旧实现用世界坐标猜方向（sizeX/sizeZ 为宽、sizeY 为高）——玩家从竖直边

@@ -16,7 +16,7 @@ import java.util.*;
 public class UVEditorHelper {
 
     float uvOffsetX, uvOffsetY, uvScaleU = 1f, uvScaleV = 1f, rotationY;
-    boolean uvFlipU, uvFlipV;
+    public boolean uvFlipU, uvFlipV, uvIs3D;
     java.util.UUID lastEditedScreenId;
     float previewZoom = 1f, previewOffsetX = 0f, previewOffsetY = 0f;
     float videoAspect = 16f / 9f; // 视频宽高比，默认 16:9
@@ -39,17 +39,18 @@ public class UVEditorHelper {
             rotationY  = (float) ut.rotationDegrees();
             uvFlipU    = ut.flipU();
             uvFlipV    = ut.flipV();
+            uvIs3D     = ut.is3D();
             previewZoom = 1f;
             previewOffsetX = 0f;
             previewOffsetY = 0f;
-            System.out.printf("[UV Load] screen=%s scaleU=%.3f scaleV=%.3f offsetU=%.3f offsetV=%.3f rot=%.1f flipU=%b flipV=%b%n",
+            System.out.printf("[UV Load] screen=%s scaleU=%.3f scaleV=%.3f offsetU=%.3f offsetV=%.3f rot=%.1f flipU=%b flipV=%b is3D=%b%n",
                     screen.name(), ut.scaleU(), ut.scaleV(), ut.offsetU(), ut.offsetV(),
-                    ut.rotationDegrees(), ut.flipU(), ut.flipV());
+                    ut.rotationDegrees(), ut.flipU(), ut.flipV(), ut.is3D());
         }
     }
 
     public UvTransform buildUV() {
-        return new UvTransform(uvOffsetX / 500.0, uvOffsetY / 500.0, uvScaleU, uvScaleV, rotationY, uvFlipU, uvFlipV);
+        return new UvTransform(uvOffsetX / 500.0, uvOffsetY / 500.0, uvScaleU, uvScaleV, rotationY, uvFlipU, uvFlipV, uvIs3D);
     }
 
     // ==================== 渲染 ====================

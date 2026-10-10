@@ -7,13 +7,18 @@ public record UvTransform(
         double scaleV,
         double rotationDegrees,
         boolean flipU,
-        boolean flipV
+        boolean flipV,
+        boolean is3D
 ) {
     public static UvTransform createDefault() {
-        return new UvTransform(0.0D, 0.0D, 1.0D, 1.0D, 0.0D, false, true);
+        return new UvTransform(0.0D, 0.0D, 1.0D, 1.0D, 0.0D, false, true, false);
     }
 
     public UvTransform(double offsetU, double offsetV, double scaleU, double scaleV, double rotationDegrees) {
-        this(offsetU, offsetV, scaleU, scaleV, rotationDegrees, false, true);
+        this(offsetU, offsetV, scaleU, scaleV, rotationDegrees, false, true, false);
+    }
+
+    public UvTransform(double offsetU, double offsetV, double scaleU, double scaleV, double rotationDegrees, boolean flipU, boolean flipV) {
+        this(offsetU, offsetV, scaleU, scaleV, rotationDegrees, flipU, flipV, false);
     }
 }

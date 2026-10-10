@@ -22,6 +22,10 @@ public final class ClientScreenCreationManager {
     }
 
     public static boolean start(UUID playerId, String screenName) {
+        return start(playerId, screenName, 0, 5.0);
+    }
+
+    public static boolean start(UUID playerId, String screenName, int screenType, double radius) {
         if (activeSession != null) {
             return false;
         }
@@ -32,7 +36,7 @@ public final class ClientScreenCreationManager {
         }
 
         ResourceKey<Level> dimension = minecraft.level.dimension();
-        activeSession = new ScreenCreationSession(playerId, screenName, dimension);
+        activeSession = new ScreenCreationSession(playerId, screenName, dimension, screenType, radius);
         return true;
     }
 

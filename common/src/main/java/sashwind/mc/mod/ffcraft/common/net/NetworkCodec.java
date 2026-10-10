@@ -100,6 +100,8 @@ public final class NetworkCodec {
         o.add("uvTransform", encodeUv(s.uvTransform()));
         o.add("channelState", encodeCh(s.channelState()));
         o.addProperty("uvManuallyEdited", s.uvManuallyEdited());
+        o.addProperty("screenType", s.screenType());
+        o.addProperty("radius", s.radius());
         return o;
     }
 
@@ -109,6 +111,7 @@ public final class NetworkCodec {
         o.addProperty("scaleU", uv.scaleU()); o.addProperty("scaleV", uv.scaleV());
         o.addProperty("rotationDegrees", uv.rotationDegrees());
         o.addProperty("flipU", uv.flipU()); o.addProperty("flipV", uv.flipV());
+        o.addProperty("is3D", uv.is3D());
         return o;
     }
 
@@ -184,7 +187,7 @@ public final class NetworkCodec {
         return encode("create_player", d);
     }
 
-    public static String createScreen(UUID playerId, String name, ResourceKey<Level> dim, List<ScreenVertex> verts) {
+    public static String createScreen(UUID playerId, String name, ResourceKey<Level> dim, List<ScreenVertex> verts, int screenType, double radius) {
         JsonObject d = new JsonObject();
         d.addProperty("playerId", playerId.toString());
         d.addProperty("name", name);
@@ -202,7 +205,13 @@ public final class NetworkCodec {
             arr.add(vo);
         }
         d.add("vertices", arr);
+        d.addProperty("screenType", screenType);
+        d.addProperty("radius", radius);
         return encode("create_screen", d);
+    }
+
+    public static String createScreen(UUID playerId, String name, ResourceKey<Level> dim, List<ScreenVertex> verts) {
+        return createScreen(playerId, name, dim, verts, 0, 5.0);
     }
 
     public static String deletePlayer(UUID playerId) {
@@ -265,6 +274,14 @@ public final class NetworkCodec {
         d.addProperty("screenId", screenId.toString());
         d.add("channelState", encodeCh(ch));
         return encode("update_screen_channel", d);
+    }
+
+    public static String updateScreenRadius(UUID playerId, UUID screenId, double radius) {
+        JsonObject d = new JsonObject();
+        d.addProperty("playerId", playerId.toString());
+        d.addProperty("screenId", screenId.toString());
+        d.addProperty("radius", radius);
+        return encode("update_screen_radius", d);
     }
 
     public static String addVideo(UUID playerId, String url, int w, int h, int fps) {
@@ -377,15 +394,19 @@ public final class NetworkCodec {
         UvTransform uv = parseUv(o.getAsJsonObject("uvTransform"));
         ScreenChannelState ch = parseChannel(o.getAsJsonObject("channelState"));
         boolean uvManuallyEdited = o.has("uvManuallyEdited") && o.get("uvManuallyEdited").getAsBoolean();
-        return new VideoScreenData(id, pid, name, dim, verts, uv, ch, uvManuallyEdited);
+        int screenType = o.has("screenType") ? o.get("screenType").getAsInt() : 0;
+        double radius = o.has("radius") ? o.get("radius").getAsDouble() : 5.0;
+        return new VideoScreenData(id, pid, name, dim, verts, uv, ch, uvManuallyEdited, screenType, radius);
     }
 
     public static UvTransform parseUv(JsonObject o) {
+        boolean is3D = o.has("is3D") && o.get("is3D").getAsBoolean();
         return new UvTransform(
                 o.get("offsetU").getAsDouble(), o.get("offsetV").getAsDouble(),
                 o.get("scaleU").getAsDouble(), o.get("scaleV").getAsDouble(),
                 o.get("rotationDegrees").getAsDouble(),
-                o.get("flipU").getAsBoolean(), o.get("flipV").getAsBoolean());
+                o.get("flipU").getAsBoolean(), o.get("flipV").getAsBoolean(),
+                is3D);
     }
 
     private static ScreenChannelState parseChannel(JsonObject o) {

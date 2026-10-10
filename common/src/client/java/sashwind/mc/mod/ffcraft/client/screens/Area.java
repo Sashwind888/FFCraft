@@ -142,10 +142,10 @@ public class Area extends AbstractScrollArea {
         // 3. 应用滚动偏移
         graphics.pose().translate(0.0f,-(float) this.scrollOffset);
 
-        // 4. 渲染所有子控件（传入调整后的鼠标 Y 坐标）
+        // 4. 渲染所有子控件（由于已经 translate(0, -scrollOffset)，传入的鼠标 Y 必须是绝对物理坐标 mouseY，否则 child 内部加上 scrollOffset 会导致双重偏移）
         for (AbstractWidget child : this.children) {
             if (child.visible) {
-                child.extractRenderState(graphics, mouseX, mouseY + this.scrollOffset, delta);
+                child.extractRenderState(graphics, mouseX, mouseY, delta);
             }
         }
 
@@ -227,9 +227,10 @@ public class Area extends AbstractScrollArea {
         }
 
         // 转发给子控件（从后往前，后添加的在上层）
-        // 子控件坐标是内容空间，需要加上滚动偏移匹配屏幕鼠标坐标
+        // TabContentWidget 的事件由 MainScreen 集中处理，避免被无意义转发吞掉
         for (int i = this.children.size() - 1; i >= 0; i--) {
             AbstractWidget child = this.children.get(i);
+            if (child.getClass().getName().contains("TabContentWidget")) continue;
             if (child.visible && child.isActive() && child.isMouseOver(mouseX, mouseY + this.scrollOffset)) {
                 if (child.mouseClicked(event, doubleClick)) {
                     return true;
@@ -269,7 +270,8 @@ public class Area extends AbstractScrollArea {
             int thumbHeight = Math.max(20, (int) (barHeight * contentRatio));
             int thumbTravel = barHeight - thumbHeight;
             float maxDelta = this.totalContentHeight - this.height;
-            float ratio = thumbTravel > 0 ? Math.max(0f, Math.min(1f, (float) deltaY / thumbTravel)) : 0f;
+            // 允许负值拖动（往上拖），限制在 [-1f, 1f]
+            float ratio = thumbTravel > 0 ? Math.max(-1f, Math.min(1f, (float) deltaY / thumbTravel)) : 0f;
             int newOffset = this.dragStartOffset + (int) (maxDelta * ratio);
             this.scrollTo(newOffset);
             return true;

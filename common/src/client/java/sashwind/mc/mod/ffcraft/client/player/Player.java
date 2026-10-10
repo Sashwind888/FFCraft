@@ -122,6 +122,12 @@ public class Player {
             currentPlayer.distances.add((double) MCplayer.getYRot());
 
             ClientScreenCreationManager.addVertex(x, y, z, MCplayer.getXRot(), MCplayer.getYRot());
+
+            ScreenCreationSession session = ClientScreenCreationManager.getActiveSession();
+            if (session != null && session.screenType() == 1) {
+                attackBlockCallback();
+                return false;
+            }
         }
         return true;
     }
@@ -131,8 +137,11 @@ public class Player {
             Player currentPlayer = isSetVertices;
             wd.clearVertices();
 
-            // 顶点数不足 3 → 左键取消创建，不提交
-            if (currentPlayer.verticesCount < 3) {
+            ScreenCreationSession session = ClientScreenCreationManager.finish();
+            boolean isSphere = session != null && session.screenType() == 1;
+
+            // 平面屏幕需 3 点以上；球体屏幕只需 1 点
+            if (session == null || (!isSphere && currentPlayer.verticesCount < 3) || (isSphere && currentPlayer.verticesCount < 1)) {
                 ClientScreenCreationManager.cancel();
                 isSetVertices = null;
                 currentPlayer.callback.run();
@@ -141,8 +150,7 @@ public class Player {
 
             currentPlayer.callback.run();
 
-            ScreenCreationSession session = ClientScreenCreationManager.finish();
-            if (session != null && session.vertices().size() >= 3) {
+            if ((isSphere && session.vertices().size() >= 1) || session.vertices().size() >= 3) {
                 VideoPlayerClientNetworking.createScreen(session.toRequest());
             }
 
@@ -219,8 +227,13 @@ public class Player {
     public static void HUDrender(GuiGraphicsExtractor graphics, DeltaTracker tickCounter) {
         net.minecraft.client.gui.Font font = Minecraft.getInstance().font;
         if (isSetVertices != null) {
-            graphics.text(font, Component.translatable("key.hud.createplayer.line1").getString(), 10, 10, 0xffffffff);
-            graphics.text(font, Component.translatable("key.hud.createplayer.vertices_count").getString() + isSetVertices.verticesCount + " / 64", 10, 20, 0xffffffff);
+            ScreenCreationSession session = ClientScreenCreationManager.getActiveSession();
+            if (session != null && session.screenType() == 1) {
+                graphics.text(font, Component.translatable("key.hud.createscreen.sphere_line1").getString(), 10, 10, 0xffffffff);
+            } else {
+                graphics.text(font, Component.translatable("key.hud.createplayer.line1").getString(), 10, 10, 0xffffffff);
+                graphics.text(font, Component.translatable("key.hud.createplayer.vertices_count").getString() + isSetVertices.verticesCount + " / 64", 10, 20, 0xffffffff);
+            }
         }
     }
 }

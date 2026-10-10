@@ -59,9 +59,9 @@ public class VideoPlayerService {
         if (!VideoPlayerPermissions.canEdit(actor, videoPlayer)) {
             throw new IllegalStateException("你没有编辑该播放器的权限");
         }
-        validateVertices(request.vertices().size());
+        validateVertices(request.vertices().size(), request.screenType());
         String name = sanitizeName(request.name(), "Screen");
-        ServerVideoScreen screen = VideoPlayerMapper.createScreen(UUID.randomUUID(), request.playerId(), name, request.dimension(), request.vertices());
+        ServerVideoScreen screen = VideoPlayerMapper.createScreen(UUID.randomUUID(), request.playerId(), name, request.dimension(), request.vertices(), request.screenType(), request.radius());
         videoPlayer.screens().add(screen);
         savedData.setDirty();
         return screen;
@@ -130,9 +130,10 @@ public class VideoPlayerService {
         }
     }
 
-    private void validateVertices(int count) {
-        if (count < 3 || count > FFCraftConstants.MAX_SCREEN_VERTICES) {
-            throw new IllegalArgumentException("屏幕顶点数量必须在 3 到 " + FFCraftConstants.MAX_SCREEN_VERTICES + " 之间");
+    private void validateVertices(int count, int screenType) {
+        int min = (screenType == 1) ? 1 : 3;
+        if (count < min || count > FFCraftConstants.MAX_SCREEN_VERTICES) {
+            throw new IllegalArgumentException("屏幕顶点数量必须在 " + min + " 到 " + FFCraftConstants.MAX_SCREEN_VERTICES + " 之间");
         }
     }
 
@@ -268,7 +269,24 @@ public class VideoPlayerService {
                 // 如果客户端声明是手动编辑，保留标志；否则保持原值（防止自动计算覆盖手动标志）
                 boolean edited = uvManuallyEdited || s.uvManuallyEdited();
                 ServerVideoScreen updated = new ServerVideoScreen(
-                        s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), uv, s.channelState(), edited);
+                        s.id(), s.playerId(), s.name(), s.dimension(), s.vertices(), uv, s.channelState(), edited, s.screenType(), s.radius());
+                player.screens().set(i, updated);
+                savedData.setDirty();
+                return;
+            }
+        }
+    }
+
+    public void updateScreenRadius(ServerPlayer actor, UUID playerId, UUID screenId, double radius) {
+        ServerVideoPlayer player = findPlayer(playerId)
+                .orElseThrow(() -> new IllegalArgumentException("播放器不存在"));
+        if (!VideoPlayerPermissions.canEdit(actor, player)) {
+            throw new IllegalStateException("你没有编辑该播放器的权限");
+        }
+        for (int i = 0; i < player.screens().size(); i++) {
+            ServerVideoScreen s = player.screens().get(i);
+            if (s.id().equals(screenId)) {
+                ServerVideoScreen updated = s.withRadius(radius);
                 player.screens().set(i, updated);
                 savedData.setDirty();
                 return;

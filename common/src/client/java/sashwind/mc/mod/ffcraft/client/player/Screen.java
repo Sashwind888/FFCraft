@@ -19,13 +19,21 @@ public class Screen {
 
     public Screen(List<Vector3d> vertices, List<Double> distances,
                   double uvOffU, double uvOffV, double uvScaleU, double uvScaleV, double uvRotDeg) {
-        this(vertices, distances, uvOffU, uvOffV, uvScaleU, uvScaleV, uvRotDeg, false, false);
+        this(vertices, distances, uvOffU, uvOffV, uvScaleU, uvScaleV, uvRotDeg, false, false, false);
     }
 
     public Screen(List<Vector3d> vertices, List<Double> distances,
                   double uvOffU, double uvOffV, double uvScaleU, double uvScaleV, double uvRotDeg,
                   boolean flipU, boolean flipV) {
+        this(vertices, distances, uvOffU, uvOffV, uvScaleU, uvScaleV, uvRotDeg, flipU, flipV, false);
+    }
+
+    public Screen(List<Vector3d> vertices, List<Double> distances,
+                  double uvOffU, double uvOffV, double uvScaleU, double uvScaleV, double uvRotDeg,
+                  boolean flipU, boolean flipV, boolean is3D) {
         this.vertices.addAll(vertices);
+
+        Vector3d basePoint = Projection3DHelper.calculateBottomCenter(vertices);
 
         List<Plane> planes = Three2Flat.splitPlanes(vertices, distances);
         double cosR = Math.cos(Math.toRadians(uvRotDeg));
@@ -45,10 +53,14 @@ public class Screen {
                 ru = ru * uvScaleU + uvOffU;
                 rv = rv * uvScaleV + uvOffV;
                 ru += 0.5; rv += 0.5;
+
+                Vector3d vertPos = p.points.get(idx);
+                org.joml.Vector2d finalUv = Projection3DHelper.apply3DUv(vertPos, basePoint, is3D, ru, rv);
+
                 computedVertices.add(new Vertex(
-                        (float) p.points.get(idx).x, (float) p.points.get(idx).y, (float) p.points.get(idx).z,
+                        (float) vertPos.x, (float) vertPos.y, (float) vertPos.z,
                         1f, 1f, 1f, 1f,
-                        (float) ru, (float) rv,
+                        (float) finalUv.x, (float) finalUv.y,
                         15, 0, 1, 0));
             }
         }

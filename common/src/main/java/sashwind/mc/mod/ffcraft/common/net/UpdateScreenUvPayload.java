@@ -22,11 +22,12 @@ public record UpdateScreenUvPayload(UUID playerId, UUID screenId, UvTransform uv
                 buf.writeDouble(payload.uvTransform().rotationDegrees());
                 buf.writeBoolean(payload.uvTransform().flipU());
                 buf.writeBoolean(payload.uvTransform().flipV());
+                buf.writeBoolean(payload.uvTransform().is3D());
             },
             buf -> new UpdateScreenUvPayload(
                     buf.readUUID(), buf.readUUID(),
                     new UvTransform(buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(),
-                            buf.readBoolean(), buf.readBoolean())
+                            buf.readBoolean(), buf.readBoolean(), buf.readBoolean())
             )
     );
     @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }

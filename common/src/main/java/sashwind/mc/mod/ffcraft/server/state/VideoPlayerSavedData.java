@@ -52,7 +52,8 @@ public class VideoPlayerSavedData extends SavedData {
             Codec.DOUBLE.fieldOf("scaleV").forGetter(UvTransform::scaleV),
             Codec.DOUBLE.fieldOf("rotationDegrees").forGetter(UvTransform::rotationDegrees),
             Codec.BOOL.fieldOf("flipU").forGetter(UvTransform::flipU),
-            Codec.BOOL.fieldOf("flipV").forGetter(UvTransform::flipV)
+            Codec.BOOL.fieldOf("flipV").forGetter(UvTransform::flipV),
+            Codec.BOOL.optionalFieldOf("is3D", false).forGetter(UvTransform::is3D)
     ).apply(instance, UvTransform::new));
 
     private static final Codec<ScreenChannelState> CHANNEL_CODEC = RecordCodecBuilder.create(instance -> instance.group(
@@ -89,9 +90,11 @@ public class VideoPlayerSavedData extends SavedData {
             SCREEN_VERTEX_CODEC.listOf().fieldOf("vertices").forGetter(ServerVideoScreen::vertices),
             UV_TRANSFORM_CODEC.fieldOf("uvTransform").forGetter(ServerVideoScreen::uvTransform),
             CHANNEL_CODEC.fieldOf("channelState").forGetter(ServerVideoScreen::channelState),
-            Codec.BOOL.optionalFieldOf("uvManuallyEdited").forGetter(s -> java.util.Optional.of(s.uvManuallyEdited()))
-    ).apply(instance, (id, pid, name, dim, verts, uv, ch, edited) ->
-            new ServerVideoScreen(id, pid, name, dim, verts, uv, ch, edited.orElse(false))));
+            Codec.BOOL.optionalFieldOf("uvManuallyEdited").forGetter(s -> java.util.Optional.of(s.uvManuallyEdited())),
+            Codec.INT.optionalFieldOf("screenType", 0).forGetter(ServerVideoScreen::screenType),
+            Codec.DOUBLE.optionalFieldOf("radius", 5.0).forGetter(ServerVideoScreen::radius)
+    ).apply(instance, (id, pid, name, dim, verts, uv, ch, edited, stype, r) ->
+            new ServerVideoScreen(id, pid, name, dim, verts, uv, ch, edited.orElse(false), stype, r)));
 
     private static final Codec<ServerVideoPlayer> PLAYER_CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.STRING.xmap(UUID::fromString, UUID::toString).fieldOf("id").forGetter(player -> player.id()),

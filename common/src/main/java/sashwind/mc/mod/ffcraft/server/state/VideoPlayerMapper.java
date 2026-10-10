@@ -43,7 +43,9 @@ public final class VideoPlayerMapper {
                 new ArrayList<>(screen.vertices()),
                 copyUv(screen.uvTransform()),
                 copyChannel(screen.channelState()),
-                screen.uvManuallyEdited()
+                screen.uvManuallyEdited(),
+                screen.screenType(),
+                screen.radius()
         );
     }
 
@@ -52,7 +54,7 @@ public final class VideoPlayerMapper {
     }
 
     private static UvTransform copyUv(UvTransform uv) {
-        return new UvTransform(uv.offsetU(), uv.offsetV(), uv.scaleU(), uv.scaleV(), uv.rotationDegrees(), uv.flipU(), uv.flipV());
+        return new UvTransform(uv.offsetU(), uv.offsetV(), uv.scaleU(), uv.scaleV(), uv.rotationDegrees(), uv.flipU(), uv.flipV(), uv.is3D());
     }
 
     private static ScreenChannelState copyChannel(ScreenChannelState state) {
@@ -63,9 +65,9 @@ public final class VideoPlayerMapper {
         return new ServerVideoPlayer(id, name, isPublic, new LinkedHashSet<>(), new ArrayList<VideoSource>(), PlaybackState.createDefault(), new ArrayList<>());
     }
 
-    public static ServerVideoScreen createScreen(UUID id, UUID playerId, String name, net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, List<ScreenVertex> vertices) {
+    public static ServerVideoScreen createScreen(UUID id, UUID playerId, String name, net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, List<ScreenVertex> vertices, int screenType, double radius) {
         UvTransform uv = calculateInitialUvTransform(vertices);
-        return new ServerVideoScreen(id, playerId, name, dimension, new ArrayList<>(vertices), uv, ScreenChannelState.createDefault(), false);
+        return new ServerVideoScreen(id, playerId, name, dimension, new ArrayList<>(vertices), uv, ScreenChannelState.createDefault(), false, screenType, radius);
     }
 
     private static UvTransform calculateInitialUvTransform(List<ScreenVertex> vertices) {

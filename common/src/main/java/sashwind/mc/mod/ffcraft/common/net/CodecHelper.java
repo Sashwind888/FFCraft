@@ -61,6 +61,8 @@ public final class CodecHelper {
         for (ScreenVertex vertex : request.vertices()) {
             writeScreenVertex(buf, vertex);
         }
+        buf.writeVarInt(request.screenType());
+        buf.writeDouble(request.radius());
     }
 
     public static CreateScreenRequest readCreateScreenRequest(RegistryFriendlyByteBuf buf) {
@@ -72,7 +74,9 @@ public final class CodecHelper {
         for (int i = 0; i < size; i++) {
             vertices.add(readScreenVertex(buf));
         }
-        return new CreateScreenRequest(playerId, name, dimension, vertices);
+        int screenType = buf.readVarInt();
+        double radius = buf.readDouble();
+        return new CreateScreenRequest(playerId, name, dimension, vertices, screenType, radius);
     }
 
     public static void writePlayerData(RegistryFriendlyByteBuf buf, VideoPlayerData player) {
@@ -126,6 +130,8 @@ public final class CodecHelper {
         writeUvTransform(buf, screen.uvTransform());
         writeChannelState(buf, screen.channelState());
         buf.writeBoolean(screen.uvManuallyEdited());
+        buf.writeVarInt(screen.screenType());
+        buf.writeDouble(screen.radius());
     }
 
     public static VideoScreenData readScreenData(RegistryFriendlyByteBuf buf) {
@@ -143,7 +149,9 @@ public final class CodecHelper {
         UvTransform uvTransform = readUvTransform(buf);
         ScreenChannelState channelState = readChannelState(buf);
         boolean uvManuallyEdited = buf.readBoolean();
-        return new VideoScreenData(id, playerId, name, dimension, vertices, uvTransform, channelState, uvManuallyEdited);
+        int screenType = buf.readVarInt();
+        double radius = buf.readDouble();
+        return new VideoScreenData(id, playerId, name, dimension, vertices, uvTransform, channelState, uvManuallyEdited, screenType, radius);
     }
 
     public static void writeVideoSource(RegistryFriendlyByteBuf buf, VideoSource source) {
@@ -204,11 +212,12 @@ public final class CodecHelper {
         buf.writeDouble(uvTransform.rotationDegrees());
         buf.writeBoolean(uvTransform.flipU());
         buf.writeBoolean(uvTransform.flipV());
+        buf.writeBoolean(uvTransform.is3D());
     }
 
     public static UvTransform readUvTransform(RegistryFriendlyByteBuf buf) {
         return new UvTransform(buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(), buf.readDouble(),
-                buf.readBoolean(), buf.readBoolean());
+                buf.readBoolean(), buf.readBoolean(), buf.readBoolean());
     }
 
     public static void writeChannelState(RegistryFriendlyByteBuf buf, ScreenChannelState state) {

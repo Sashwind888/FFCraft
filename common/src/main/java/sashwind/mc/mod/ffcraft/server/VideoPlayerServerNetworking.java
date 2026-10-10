@@ -40,7 +40,9 @@ public final class VideoPlayerServerNetworking {
                 svc.createPlayer(player, new CreatePlayerRequest(data.get("name").getAsString(), data.has("isPublic") && data.get("isPublic").getAsBoolean())); syncAll();
             }
             case "create_screen" -> {
-                svc.createScreen(player, new CreateScreenRequest(pid.get(), data.get("name").getAsString(), player.level().dimension(), NetworkCodec.parseVertices(data.getAsJsonArray("vertices")))); syncAll();
+                int stype = data.has("screenType") ? data.get("screenType").getAsInt() : 0;
+                double rad = data.has("radius") ? data.get("radius").getAsDouble() : 5.0;
+                svc.createScreen(player, new CreateScreenRequest(pid.get(), data.get("name").getAsString(), player.level().dimension(), NetworkCodec.parseVertices(data.getAsJsonArray("vertices")), stype, rad)); syncAll();
             }
             case "delete_player" -> { svc.deletePlayer(player, pid.get()); syncAll(); }
             case "delete_screen" -> { svc.deleteScreen(player, pid.get(), sid.get()); syncAll(); }
@@ -67,6 +69,12 @@ public final class VideoPlayerServerNetworking {
             case "update_screen_channel" -> {
                 var ch = data.getAsJsonObject("channelState");
                 svc.updateScreenChannel(player, pid.get(), sid.get(), new ScreenChannelState(ch.get("leftEnabled").getAsBoolean(), ch.get("rightEnabled").getAsBoolean())); syncAll();
+            }
+            case "update_screen_radius" -> {
+                System.out.printf("[FFCraft Server] 收到 update_screen_radius: player=%s, screenId=%s, radius=%.2f%n",
+                        pid.get(), sid.get(), data.get("radius").getAsDouble());
+                svc.updateScreenRadius(player, pid.get(), sid.get(), data.get("radius").getAsDouble());
+                syncAll();
             }
             case "add_video" -> {
                 svc.addVideo(player, pid.get(), new VideoSource(data.get("url").getAsString(), st.apply("targetWidth"), st.apply("targetHeight"), NetworkCodec.parseInt(data, "targetFps", 30)));

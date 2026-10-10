@@ -10,6 +10,11 @@ public record CreateScreenRequest(
         UUID playerId,
         String name,
         ResourceKey<Level> dimension,
-        List<ScreenVertex> vertices
+        List<ScreenVertex> vertices,
+        int screenType,
+        double radius
 ) {
+    public CreateScreenRequest(UUID playerId, String name, ResourceKey<Level> dimension, List<ScreenVertex> vertices) {
+        this(playerId, name, dimension, vertices, 0, 5.0);
+    }
 }
