@@ -35,7 +35,7 @@ public class UVEditorHelper {
             uvOffsetX = (float) (ut.offsetU() * 500.0);
             uvOffsetY = (float) (ut.offsetV() * 500.0);
             uvScaleU   = (float) ut.scaleU();
-            uvScaleV   = (float) ut.scaleV();
+            uvScaleV   = (float) ut.scaleU(); // 屏幕采用物理正交度量，缩放强制保持 1:1 等比，彻底消除历史遗留的拉伸畸变！
             rotationY  = (float) ut.rotationDegrees();
             uvFlipU    = ut.flipU();
             uvFlipV    = ut.flipV();
@@ -66,40 +66,53 @@ public class UVEditorHelper {
         float areaH = ph - pad * 2;
         float cx = px + pw / 2f + previewOffsetX;
         float cy = py + ph / 2f + previewOffsetY;
-        // 按视频宽高比约束帧尺寸，避免拉伸
-        if (areaW / areaH > videoAspect) {
+        // 编辑画布严格以当前实际视频画幅 (如 2.11:1 或 16:9 或 4:3) 作为基准参考视口，确保所见即所得
+        float va = videoAspect > 0.01f ? videoAspect : (16f / 9f);
+        if (areaW / areaH > va) {
             frameH = areaH * previewZoom;
-            frameW = frameH * videoAspect;
+            frameW = frameH * va;
         } else {
             frameW = areaW * previewZoom;
-            frameH = frameW / videoAspect;
+            frameH = frameW / va;
         }
         frameX = cx - frameW / 2f;
         frameY = cy - frameH / 2f;
 
-        graphics.fill((int) frameX, (int) frameY, (int) (frameX + frameW), (int) (frameY + frameH), 0xFF000000);
+        // 关键防护：开启严格的局部 Scissor 裁剪，防止多边形或手柄拖出 UV 框外导致渲染穿透遮挡下方控件
         graphics.enableScissor(px, py, px + pw, py + ph);
 
+        graphics.fill((int) frameX, (int) frameY, (int) (frameX + frameW), (int) (frameY + frameH), 0xFF000000);
+
+        // 网格：在视频视口内绘制自适应等距网格背景
+        if (previewZoom <= 5f) {
+            float cellSize = frameH / 9f; // 保证横纵网格皆为绝对正方形
+            for (float gx = frameX; gx <= frameX + frameW + 0.1f; gx += cellSize) {
+                vLine(graphics, gx, Math.max(py, frameY), Math.min(py + ph, frameY + frameH), 0x25FFFFFF);
+            }
+            for (float gy = frameY; gy <= frameY + frameH + 0.1f; gy += cellSize) {
+                hLine(graphics, gy, Math.max(px, frameX), Math.min(px + pw, frameX + frameW), 0x25FFFFFF);
+            }
+        }
+
+        // 视频分辨率/画幅信息标识
+        String aspectStr = String.format("Video (%.2f:1)", va);
+        graphics.text(font, aspectStr, (int) frameX + 4, (int) frameY + 4, 0xFF00BFFF);
+
+        // 绘制以视频中心为坐标原点的绝对正交物理坐标系（原点标记、+U 红色轴、+V 绿色轴、基准中心线）
+        float vcx = frameX + frameW / 2f;
+        float vcy = frameY + frameH / 2f;
+        drawCoordinateSystem(graphics, font, vcx, vcy, frameH, frameW);
+
+        // 覆盖层多边形屏幕绘制
         java.util.UUID curId = screen.id();
-        // 未选中屏幕
         for (VideoScreenData s : player.screens()) {
             if (s.id().equals(curId)) continue;
             if (s.vertices().size() >= 3)
                 drawScreenOverlay(graphics, s, null, 0x20444444, 0xAA666666, 0xFF888888);
         }
-        // 选中屏幕（使用本地编辑 UV）
         drawScreenOverlay(graphics, screen, buildUV(), 0x20FF4488, 0xFFFF4488, 0xFF66FFFF);
 
-        // 网格
-        if (previewZoom <= 5f) {
-            for (int g = 0; g <= 10; g++) {
-                float gx = frameX + frameW * g / 10f;
-                float gy = frameY + frameH * g / 10f;
-                vLine(graphics, gx, Math.max(py, frameY), Math.min(py + ph, frameY + frameH), 0x30FFFFFF);
-                hLine(graphics, gy, Math.max(px, frameX), Math.min(px + pw, frameX + frameW), 0x30FFFFFF);
-            }
-        }
-        // frame 边框
+        // frame 视频外边框
         rectBorder(graphics, (int) frameX, (int) frameY, (int) frameW, (int) frameH, 0xFFAAAAAA);
 
         graphics.text(font, "(0,0)", (int) frameX + 2, (int) frameY + 2, 0xFFFFFFFF);
@@ -107,7 +120,43 @@ public class UVEditorHelper {
         graphics.text(font, "(0,1)", (int) frameX + 2, (int) (frameY + frameH) - 12, 0xFFFFFFFF);
         graphics.text(font, screen.name(), (int) frameX + 4, (int) (frameY + frameH) - 14, 0xFFFF66AA);
 
+        // 关闭局部 Scissor 裁剪，确保不破坏外部 Area 滚动裁剪栈
         graphics.disableScissor();
+
+        // 绘制 UV 预览区域最外层常驻边框
+        rectBorder(graphics, px, py, pw, ph, 0xFF444444);
+    }
+
+    /**
+     * 绘制以视频中心为原点的物理正交坐标系（红轴 +U，绿轴 +V）
+     */
+    private void drawCoordinateSystem(GuiGraphicsExtractor g, Font font, float vcx, float vcy, float vidH, float vidW) {
+        // 1. 水平与垂直半透明中心轴基准线
+        hLine(g, vcy, Math.max(uvX, frameX), Math.min(uvX + uvW, frameX + frameW), 0x30FF5555);
+        vLine(g, vcx, Math.max(uvY, frameY), Math.min(uvY + uvH, frameY + frameH), 0x3055FF55);
+
+        // 2. 坐标系主轴线（长度约占视口 20%~25%）
+        float axisLenU = Math.min(50f, vidW * 0.22f);
+        float axisLenV = Math.min(50f, vidH * 0.22f);
+
+        // +U 轴 (水平向右，鲜红色)
+        line(g, (int) vcx, (int) vcy, (int) (vcx + axisLenU), (int) vcy, 0xFFFF4444, 2);
+        // +U 箭头
+        line(g, (int) (vcx + axisLenU), (int) vcy, (int) (vcx + axisLenU - 5), (int) (vcy - 3), 0xFFFF4444, 2);
+        line(g, (int) (vcx + axisLenU), (int) vcy, (int) (vcx + axisLenU - 5), (int) (vcy + 3), 0xFFFF4444, 2);
+        g.text(font, "+U", (int) (vcx + axisLenU + 4), (int) (vcy - 4), 0xFFFF5555);
+
+        // +V 轴 (垂直向下，鲜绿色)
+        line(g, (int) vcx, (int) vcy, (int) vcx, (int) (vcy + axisLenV), 0xFF44FF44, 2);
+        // +V 箭头
+        line(g, (int) vcx, (int) (vcy + axisLenV), (int) (vcx - 3), (int) (vcy + axisLenV - 5), 0xFF44FF44, 2);
+        line(g, (int) vcx, (int) (vcy + axisLenV), (int) (vcx + 3), (int) (vcy + axisLenV - 5), 0xFF44FF44, 2);
+        g.text(font, "+V", (int) (vcx - 4), (int) (vcy + axisLenV + 4), 0xFF55FF55);
+
+        // 3. 原点中心标记
+        g.fill((int) vcx - 2, (int) vcy - 2, (int) vcx + 3, (int) vcy + 3, 0xFFFFFFFF);
+        g.fill((int) vcx - 1, (int) vcy - 1, (int) vcx + 2, (int) vcy + 2, 0xFFFFCC00);
+        g.text(font, "O(0,0)", (int) vcx - 28, (int) vcy - 11, 0xDDFFFF00);
     }
 
     // ==================== 覆盖层绘制 ====================
@@ -119,7 +168,8 @@ public class UVEditorHelper {
         for (var v : s.vertices()) { vs.add(v.toVector()); dists.add(v.pitch()); dists.add(v.yaw()); }
 
         UvTransform ut = localUv != null ? localUv : s.uvTransform();
-        float su = (float) ut.scaleU(), sv = (float) ut.scaleV();
+        double scaleRatio = ClientVideoPlaybackManager.getAspectScaleRatio(s.id());
+        float su = (float) (ut.scaleU() * scaleRatio), sv = su; // 保持绝对等比并应用动态比例自适应系数
         float ou = (float) ut.offsetU(), ov = (float) ut.offsetV();
         float rot = (float) ut.rotationDegrees();
         boolean fpu = ut.flipU(), fpv = ut.flipV();
@@ -149,10 +199,11 @@ public class UVEditorHelper {
     // ---- 坐标转换 ----
 
     private float[] xform(float u, float v, float su, float sv, float ou, float ov, float ca, float sa, boolean fpu, boolean fpv) {
-        if (fpu) u = 1 - u; if (fpv) v = 1 - v;
-        float ru = (ca * (u - 0.5f) - sa * (v - 0.5f)) * su + ou + 0.5f;
-        float rv = (sa * (u - 0.5f) + ca * (v - 0.5f)) * sv + ov + 0.5f;
-        return new float[]{frameX + ru * frameW, frameY + rv * frameH};
+        float rotDeg = (float) Math.toDegrees(Math.atan2(sa, ca));
+        org.joml.Vector2d rigid = sashwind.mc.mod.ffcraft.client.player.MetricCoordinateSystem.transformRigid(
+                u, v, ou, ov, su, sv, rotDeg, fpu, fpv);
+        return sashwind.mc.mod.ffcraft.client.player.MetricCoordinateSystem.toUI_Pixels(
+                rigid.x, rigid.y, frameX, frameY, frameW, frameH);
     }
     private int[] pt(double[] uvs, int i, float su, float sv, float ou, float ov, float ca, float sa, boolean fpu, boolean fpv) {
         float[] t = xform((float) uvs[i * 2], (float) uvs[i * 2 + 1], su, sv, ou, ov, ca, sa, fpu, fpv);
@@ -177,8 +228,13 @@ public class UVEditorHelper {
 
     float getMU(int mx) { return (mx - frameX) / frameW; }
     float getMV(int my) { return (my - frameY) / frameH; }
-    float getCU() { return uvOffsetX / 500f + 0.5f; }
+    float getCU() {
+        float va = videoAspect > 0.01f ? videoAspect : (16f / 9f);
+        return (uvOffsetX / 500f) / va + 0.5f;
+    }
     float getCV() { return uvOffsetY / 500f + 0.5f; }
+
+    float editStartMouseU, editStartMouseV;
 
     public boolean mouseClicked(int mx, int my, VideoScreenData screen) {
         if (!isInUVArea(mx, my)) return false;
@@ -198,23 +254,32 @@ public class UVEditorHelper {
             }
         }
 
-        // 其余区域：左键拖动调整 UV 偏移
-        editingMode = "move"; editStartOffsetX = uvOffsetX; editStartOffsetY = uvOffsetY;
+        // 其余区域：左键拖动调整 UV 偏移（记录按下时的初始鼠标画布坐标，绝不乱跳）
+        editingMode = "move";
+        editStartOffsetX = uvOffsetX;
+        editStartOffsetY = uvOffsetY;
+        editStartMouseU = mu;
+        editStartMouseV = mv;
         return true;
     }
 
     public void mouseDragged(int mx, int my) {
         if (editingMode == null) return;
         float mu = getMU(mx), mv = getMV(my);
-        float cu = getCU(), cv = getCV();
         if ("move".equals(editingMode)) {
-            uvOffsetX = editStartOffsetX + (mu - cu) * 500f;
-            uvOffsetY = editStartOffsetY + (mv - cv) * 500f;
+            // 平滑增量拖动：无论鼠标点在多边形的什么位置，只按实际位移量平移，彻底杜绝乱跳！
+            float va = videoAspect > 0.01f ? videoAspect : (16f / 9f);
+            float deltaU = (mu - editStartMouseU) * va;
+            float deltaV = mv - editStartMouseV;
+            uvOffsetX = editStartOffsetX + deltaU * 500f;
+            uvOffsetY = editStartOffsetY + deltaV * 500f;
         } else if ("scale".equals(editingMode)) {
+            float cu = getCU(), cv = getCV();
             float cd = (float) Math.sqrt(Math.pow(mu - cu, 2) + Math.pow(mv - cv, 2));
             if (editStartDist > 0.001f) {
                 float ratio = Math.max(0.1f, Math.min(3f, cd / editStartDist));
-                uvScaleU = editStartScale * ratio; uvScaleV = editStartScaleV * ratio;
+                uvScaleU = editStartScale * ratio;
+                uvScaleV = uvScaleU;
             }
             uvOffsetX = editStartOffsetX; uvOffsetY = editStartOffsetY;
         }
@@ -239,7 +304,8 @@ public class UVEditorHelper {
     public void panDrag(int mx, int my, double dx, double dy) { previewOffsetX += (float) dx; previewOffsetY += (float) dy; }
 
     public float[] computeBounds(VideoScreenData screen) {
-        float su = uvScaleU, sv = uvScaleV;
+        double scaleRatio = ClientVideoPlaybackManager.getAspectScaleRatio(screen.id());
+        float su = (float) (uvScaleU * scaleRatio), sv = su;
         float ou = uvOffsetX / 500f, ov = uvOffsetY / 500f;
         float rot = rotationY;
         boolean fpu = uvFlipU, fpv = uvFlipV;
@@ -250,12 +316,14 @@ public class UVEditorHelper {
         List<Double> dists = new ArrayList<>();
         for (var v : screen.vertices()) { vs.add(v.toVector()); dists.add(v.pitch()); dists.add(v.yaw()); }
         List<double[]> stitched = sashwind.mc.mod.ffcraft.client.player.Three2Flat.getStitchedUVs(vs, dists);
+        float va = videoAspect > 0.01f ? videoAspect : (16f / 9f);
         for (double[] uvs : stitched) {
             for (int i = 0; i < uvs.length / 2; i++) {
                 float u = (float) uvs[i * 2], v = (float) uvs[i * 2 + 1];
-                if (fpu) u = 1 - u; if (fpv) v = 1 - v;
-                float ru = (ca * (u - 0.5f) - sa * (v - 0.5f)) * su + ou + 0.5f;
-                float rv = (sa * (u - 0.5f) + ca * (v - 0.5f)) * sv + ov + 0.5f;
+                org.joml.Vector2d rigid = sashwind.mc.mod.ffcraft.client.player.MetricCoordinateSystem.transformRigid(
+                        u, v, ou, ov, su, sv, rot, fpu, fpv);
+                float ru = (float) (rigid.x / va + 0.5);
+                float rv = (float) (rigid.y + 0.5);
                 if (ru < bounds[0]) bounds[0] = ru; if (ru > bounds[1]) bounds[1] = ru;
                 if (rv < bounds[2]) bounds[2] = rv; if (rv > bounds[3]) bounds[3] = rv;
             }

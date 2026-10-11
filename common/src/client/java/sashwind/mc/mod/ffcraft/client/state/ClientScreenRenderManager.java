@@ -34,6 +34,8 @@ public final class ClientScreenRenderManager {
     private static final Map<UUID, WorldDraw> PLAYER_WORLDDRAWS = new ConcurrentHashMap<>();
     private static final Map<UUID, UvTransform> LAST_UV_TRANSFORMS = new ConcurrentHashMap<>();
     private static final Map<UUID, Double> LAST_SCREEN_RADII = new ConcurrentHashMap<>();
+    private static final Map<UUID, Double> LAST_SCREEN_ASPECTS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Double> LAST_SCALE_RATIOS = new ConcurrentHashMap<>();
     private static long appliedSnapshotVersion = Long.MIN_VALUE;
     private ClientScreenRenderManager() {}
 
@@ -65,6 +67,8 @@ public final class ClientScreenRenderManager {
         PLAYER_WORLDDRAWS.clear();
         LAST_UV_TRANSFORMS.clear();
         LAST_SCREEN_RADII.clear();
+        LAST_SCREEN_ASPECTS.clear();
+        LAST_SCALE_RATIOS.clear();
     }
 
     private static void rebuild(VideoPlayerSnapshot snapshot) {
@@ -104,13 +108,23 @@ public final class ClientScreenRenderManager {
                         }
                     }
                 } else {
-                    if (!ACTIVE_SCREENS.containsKey(sd.id()) || !uvTransformsEqual(newUv, lastUv)) {
+                    double aspect = ClientVideoPlaybackManager.getVideoAspect(player.id());
+                    Double lastAspect = LAST_SCREEN_ASPECTS.get(sd.id());
+                    boolean aspectChanged = lastAspect == null || Math.abs(lastAspect - aspect) > 0.005;
+
+                    double scaleRatio = ClientVideoPlaybackManager.getAspectScaleRatio(sd.id());
+                    Double lastRatio = LAST_SCALE_RATIOS.get(sd.id());
+                    boolean ratioChanged = lastRatio == null || Math.abs(lastRatio - scaleRatio) > 0.005;
+
+                    if (!ACTIVE_SCREENS.containsKey(sd.id()) || !uvTransformsEqual(newUv, lastUv) || aspectChanged || ratioChanged) {
                         Screen existing = ACTIVE_SCREENS.remove(sd.id());
                         if (existing != null) existing.close();
-                        Screen screen = createScreen(sd);
+                        Screen screen = createScreen(sd, aspect);
                         if (screen != null) {
                             ACTIVE_SCREENS.put(sd.id(), screen);
                             LAST_UV_TRANSFORMS.put(sd.id(), newUv);
+                            LAST_SCREEN_ASPECTS.put(sd.id(), aspect);
+                            LAST_SCALE_RATIOS.put(sd.id(), scaleRatio);
                             dirtyPlayers.add(pid);
                         }
                     }
@@ -127,6 +141,7 @@ public final class ClientScreenRenderManager {
             Screen screen = ACTIVE_SCREENS.remove(id);
             if (screen != null) screen.close();
             LAST_UV_TRANSFORMS.remove(id);
+            LAST_SCREEN_ASPECTS.remove(id);
         }
 
         List<UUID> staleSphereScreens = new ArrayList<>();
@@ -217,7 +232,22 @@ public final class ClientScreenRenderManager {
                 && a.is3D() == b.is3D();
     }
 
+    private static double getVideoAspect(VideoPlayerData player) {
+        int idx = player.playbackState().currentIndex();
+        if (idx >= 0 && idx < player.playlist().size()) {
+            var vs = player.playlist().get(idx);
+            if (vs.originalWidth() > 0 && vs.originalHeight() > 0) {
+                return (double) vs.originalWidth() / vs.originalHeight();
+            }
+        }
+        return 16.0 / 9.0;
+    }
+
     private static Screen createScreen(VideoScreenData sd) {
+        return createScreen(sd, 16.0 / 9.0);
+    }
+
+    private static Screen createScreen(VideoScreenData sd, double videoAspect) {
         List<Vector3d> verts = new ArrayList<>();
         List<Double> dists = new ArrayList<>();
         for (ScreenVertex sv : sd.vertices()) {
@@ -226,10 +256,12 @@ public final class ClientScreenRenderManager {
             dists.add(sv.yaw());
         }
         var uv = sd.uvTransform();
+        double scaleRatio = ClientVideoPlaybackManager.getAspectScaleRatio(sd.id());
+        double effectiveScale = uv.scaleU() * scaleRatio;
         try {
             Screen screen = new Screen(verts, dists,
-                    uv.offsetU(), uv.offsetV(), uv.scaleU(), uv.scaleV(), uv.rotationDegrees(),
-                    uv.flipU(), uv.flipV(), uv.is3D());
+                    uv.offsetU(), uv.offsetV(), effectiveScale, effectiveScale, uv.rotationDegrees(),
+                    uv.flipU(), uv.flipV(), uv.is3D(), videoAspect);
             screen.name = sd.name();
             return screen;
         } catch (Exception e) {

@@ -60,6 +60,14 @@ public class ClientVideoPlaybackManager {
 
     // ===== 对外接口 =====
 
+    public static double getVideoAspect(UUID playerId) {
+        var p = players.get(playerId);
+        if (p != null && p.getVideoWidth() > 0 && p.getVideoHeight() > 0) {
+            return (double) p.getVideoWidth() / p.getVideoHeight();
+        }
+        return 16.0 / 9.0;
+    }
+
     public static double getDuration(UUID playerId) {
         var p = players.get(playerId);
         return p != null ? p.getDuration() : 0;
@@ -387,16 +395,14 @@ public class ClientVideoPlaybackManager {
                 pushDownscaledToScreens(player, latest);
                 videoFrameSeq.put(pid, pushed);
 
-                // 首帧 UV fallback
-                if (uvRecalculated.get(pid) == null || !uvRecalculated.get(pid)) {
-                    var vs = player.playlist().get(idx);
-                    int vw = vs.originalWidth();
-                    int vh = vs.originalHeight();
-                    if (vw <= 0 || vh <= 0) { vw = latest.getWidth(); vh = latest.getHeight(); }
-                    if (vw > 0 && vh > 0) {
-                        recalcUvForVideo(pid, player, (double) vw / vh);
-                        uvRecalculated.put(pid, true);
-                    }
+                // 实时监测视频画幅变化（切集、分辨率就绪、大变小或小变大），自动重算比例
+                double curAspect = (latest.getWidth() > 0 && latest.getHeight() > 0)
+                        ? ((double) latest.getWidth() / latest.getHeight()) : (16.0 / 9.0);
+                Double lastAsp = lastKnownAspects.get(pid);
+                if (lastAsp == null || Math.abs(lastAsp - curAspect) > 0.005) {
+                    lastKnownAspects.put(pid, curAspect);
+                    updateAspectRatiosForPlayer(pid, player, curAspect);
+                    ClientVideoPlayerCache.replace(ClientVideoPlayerCache.getSnapshot());
                 }
                 latest.close();
             }
@@ -528,94 +534,96 @@ public class ClientVideoPlaybackManager {
 
     /**
      * 计算空间音量：
-     * 屏幕中心距离衰减 × 视角方向左右平衡（等功率法则）× 声道开关 × 用户音量
-     * ap != null → OpenAL PCM 空间音频（0.33-0.36 旧 API）
-     * ap == null → 伪空间音频：mpv audio-pan-x/volume 模拟（0.37+ 无音频渲染 API）
+     * 遍历播放器下的每一个屏幕独立计算空间声场与声道设置，
+     * 并通过声学能量叠加模型合成玩家左右耳总声压，杜绝多屏幕声音被互相顶掉或忽略！
      */
     private static void updateSpatialAudio(VideoPlayerData player, MpvPlayer mp, OpenAlAudioPlayer ap) {
         var cam = Minecraft.getInstance().player;
         if (cam == null || player.screens().isEmpty()) return;
-        var sc = player.screens().get(0);
-        if (sc.vertices().isEmpty()) return;
 
-        // 【3D 球形屏幕专属音频处理】
-        if (sc.isSphere()) {
-            var bp = sc.vertices().get(0);
-            double r = sc.radius();
-            double cx = bp.x();
-            double cy = bp.y() + r; // 球心在底点上方半径处
-            double cz = bp.z();
+        float u = currentVolume;
+        if (u <= 0.0001f) {
+            if (ap != null) ap.setSpatialVolumes(0f, 0f);
+            else mp.setSpatialFallback(0f, 0f);
+            return;
+        }
 
-            double dx = cam.getX() - cx;
-            double dy = cam.getEyeY() - cy;
-            double dz = cam.getZ() - cz;
-            double distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        var look = cam.getLookAngle();
+        var right = new net.minecraft.world.phys.Vec3(-look.z, 0, look.x).normalize();
+
+        double sumL2 = 0.0;
+        double sumR2 = 0.0;
+
+        for (var sc : player.screens()) {
+            if (sc.vertices().isEmpty()) continue;
 
             var ch = sc.channelState();
             float leftFactor = ch.leftEnabled() ? 1f : 0f;
             float rightFactor = ch.rightEnabled() ? 1f : 0f;
-            float u = currentVolume;
+            if (leftFactor <= 0.001f && rightFactor <= 0.001f) continue;
 
-            // 如果玩家在球体内部（距离球心 <= 半径）：全方位沉浸包裹，使用最大音量，无视衰减与方向单侧平衡
-            if (distToCenter <= r) {
-                float maxL = u * leftFactor;
-                float maxR = u * rightFactor;
-                if (ap != null) ap.setSpatialVolumes(maxL, maxR);
-                else mp.setSpatialFallback(maxL, maxR);
-                return;
+            float lVol = 0f, rVol = 0f;
+
+            if (sc.isSphere()) {
+                // 【3D 球形屏幕声场】
+                var bp = sc.vertices().get(0);
+                double r = sc.radius();
+                double cx = bp.x();
+                double cy = bp.y() + r; // 球心在底点上方半径处
+                double cz = bp.z();
+
+                double dx = cam.getX() - cx;
+                double dy = cam.getEyeY() - cy;
+                double dz = cam.getZ() - cz;
+                double distToCenter = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+                if (distToCenter <= r) {
+                    // 玩家在球体内部：全方位沉浸包裹，全音量发声
+                    lVol = u * leftFactor;
+                    rVol = u * rightFactor;
+                } else {
+                    // 玩家在球体外部：根据表面距离衰减与方位平衡
+                    double distToSurface = distToCenter - r;
+                    float distVol = (float) Math.clamp(1.0 / Math.max(1, distToSurface / 16.0), 0, 1);
+                    var toScr = new net.minecraft.world.phys.Vec3(cx - cam.getX(), 0, cz - cam.getZ()).normalize();
+                    float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
+                    lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
+                    rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
+                }
+            } else {
+                // 【平面多边形屏幕声场】
+                double cx = 0, cy = 0, cz = 0;
+                for (var v : sc.vertices()) { cx += v.x(); cy += v.y(); cz += v.z(); }
+                int n = sc.vertices().size();
+                cx /= n; cy /= n; cz /= n;
+
+                double dx = cx - cam.getX();
+                double dy = cy - cam.getEyeY();
+                double dz = cz - cam.getZ();
+                double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                float distVol = (float) Math.clamp(1.0 / Math.max(1, dist / 16.0), 0, 1);
+
+                var toScr = new net.minecraft.world.phys.Vec3(dx, 0, dz).normalize();
+                float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
+
+                lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
+                rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
             }
 
-            // 如果玩家在球体外部：根据到球体表面的距离进行平滑自然衰减
-            double distToSurface = distToCenter - r;
-            float distVol = (float) Math.clamp(1.0 / Math.max(1, distToSurface / 16.0), 0, 1);
-
-            var look = cam.getLookAngle();
-            var right = new net.minecraft.world.phys.Vec3(-look.z, 0, look.x).normalize();
-            var toScr = new net.minecraft.world.phys.Vec3(cx - cam.getX(), 0, cz - cam.getZ()).normalize();
-            float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
-
-            float lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
-            float rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
-
-            if (ap != null) ap.setSpatialVolumes(lVol, rVol);
-            else mp.setSpatialFallback(lVol, rVol);
-            return;
+            sumL2 += lVol * lVol;
+            sumR2 += rVol * rVol;
         }
 
-        // ① 屏幕中心点
-        double cx = 0, cy = 0, cz = 0;
-        for (var v : sc.vertices()) { cx += v.x(); cy += v.y(); cz += v.z(); }
-        int n = sc.vertices().size();
-        cx /= n; cy /= n; cz /= n;
+        // 多声源能量叠加，上限钳制在用户设定总音量 u 内
+        float finalL = (float) Math.min(u, Math.sqrt(sumL2));
+        float finalR = (float) Math.min(u, Math.sqrt(sumR2));
 
-        // ② 距离衰减: 16 格内满音量，每 16 格减半
-        double dx = cx - cam.getX();
-        double dy = cy - cam.getEyeY();
-        double dz = cz - cam.getZ();
-        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        float distVol = (float) Math.clamp(1.0 / Math.max(1, dist / 16), 0, 1);
-
-        // ③ 左右声道平衡（等功率法则）
-        var look = cam.getLookAngle();
-        var right = new net.minecraft.world.phys.Vec3(-look.z, 0, look.x).normalize();
-        var toScr = new net.minecraft.world.phys.Vec3(dx, 0, dz).normalize();
-        float pan = (float) Math.clamp(right.dot(toScr), -1, 1);
-
-        // ④ 声道开关
-        var ch = sc.channelState();
-        float leftFactor = ch.leftEnabled() ? 1f : 0f;
-        float rightFactor = ch.rightEnabled() ? 1f : 0f;
-
-        // ⑤ 综合
-        float u = currentVolume;
-        float lVol = distVol * u * leftFactor  * (float) Math.sqrt((1 - pan) / 2);
-        float rVol = distVol * u * rightFactor * (float) Math.sqrt((1 + pan) / 2);
-
-        if (ap != null) ap.setSpatialVolumes(lVol, rVol);
-        else mp.setSpatialFallback(lVol, rVol);
+        if (ap != null) ap.setSpatialVolumes(finalL, finalR);
+        else mp.setSpatialFallback(finalL, finalR);
     }
 
     public static void stopAll() {
+        if (players.isEmpty() && audioPlayers.isEmpty()) return;
         System.out.println("[VideoPlayer] stopAll: 销毁 " + players.size() + " 个播放器");
         for (var mp : players.values()) mp.stopPulling();
         players.clear();
@@ -643,29 +651,72 @@ public class ClientVideoPlaybackManager {
         ClientVideoPlayerCache.forceStop(playerId);
     }
 
-    // ===== UV =====
+    // ===== UV 与画幅自适应机制 =====
 
-    public static void markUvManuallyEdited(UUID screenId) { uvManuallyEdited.put(screenId, true); }
+    private static final Map<UUID, Double> screenBaseAspects = new ConcurrentHashMap<>();
+    private static final Map<UUID, Double> screenAspectRatios = new ConcurrentHashMap<>();
+    private static final Map<UUID, Double> lastKnownAspects = new ConcurrentHashMap<>();
+
+    /**
+     * 每次玩家手动编辑 UV（滑块拖动、数值修改、手柄调整、保存）后调用：
+     * 强制重置当前自适应重算系数为 1.0，并将当前视频画幅锚定为新的基准比例！
+     */
+    public static void markUvManuallyEdited(UUID screenId) {
+        uvManuallyEdited.put(screenId, true);
+        resetAspectScaleRatio(screenId);
+    }
+
+    public static void resetAspectScaleRatio(UUID screenId) {
+        screenAspectRatios.put(screenId, 1.0);
+        UUID pid = findScreenPlayerId(screenId);
+        if (pid != null) {
+            double cur = getVideoAspect(pid);
+            screenBaseAspects.put(screenId, cur);
+        }
+    }
+
+    public static double getAspectScaleRatio(UUID screenId) {
+        return screenAspectRatios.getOrDefault(screenId, 1.0);
+    }
+
+    public static double getBaseAspect(UUID screenId) {
+        return screenBaseAspects.getOrDefault(screenId, 16.0 / 9.0);
+    }
+
+    public static UUID findScreenPlayerId(UUID screenId) {
+        var snapshot = ClientVideoPlayerCache.getSnapshot();
+        if (snapshot != null) {
+            for (var p : snapshot.players()) {
+                for (var s : p.screens()) {
+                    if (s.id().equals(screenId)) return p.id();
+                }
+            }
+        }
+        return null;
+    }
+
+    public static void updateAspectRatiosForPlayer(UUID pid, VideoPlayerData player, double currentAspect) {
+        if (currentAspect <= 0.01) currentAspect = 16.0 / 9.0;
+        for (var sd : player.screens()) {
+            if (sd.isSphere()) continue;
+            UUID sid = sd.id();
+            Double base = screenBaseAspects.get(sid);
+            if (base == null || base <= 0.01) {
+                screenBaseAspects.put(sid, currentAspect);
+                screenAspectRatios.put(sid, 1.0);
+            } else {
+                // 当视频画幅比例变化时双向自适应重算：
+                // 宽屏化 (小变大 currentAspect > base) 缩放放大，窄屏化 (大变小 currentAspect < base) 缩放缩小
+                double ratio = currentAspect / base;
+                screenAspectRatios.put(sid, ratio);
+            }
+        }
+    }
+
     public static boolean isUvManuallyEdited(UUID screenId) { return uvManuallyEdited.getOrDefault(screenId, false); }
 
     private static void recalcUvForVideo(UUID pid, VideoPlayerData player, double videoAspect) {
-        for (var sd : player.screens()) {
-            if (sd.isSphere()) continue; // 球形屏幕固定满幅贴图，无需计算视频宽高比
-            if (sd.uvManuallyEdited() || uvManuallyEdited.getOrDefault(sd.id(), false)) continue;
-            // 屏幕宽高比必须在 UV 坐标系下测量（u 轴 = 首条边，与渲染端 Plane 一致）。
-            // 旧实现用世界坐标猜方向（sizeX/sizeZ 为宽、sizeY 为高）——玩家从竖直边
-            // 开始点选时 u 轴是竖直的，letterbox 比例加错轴 → 视频被纵向拉伸。
-            double[] span = uvSpanOf(sd.vertices());
-            if (span == null) continue;
-            double screenAspect = span[0] / span[1];
-            double su, sv;
-            if (screenAspect > videoAspect) { su = screenAspect / videoAspect; sv = 1.0; }
-            else { su = 1.0; sv = videoAspect / screenAspect; }
-            var cur = sd.uvTransform();
-            if (Math.abs(cur.scaleU() - su) < 0.005 && Math.abs(cur.scaleV() - sv) < 0.005) continue;
-            var newUv = new UvTransform(0, 0, su, sv, 0, cur.flipU(), cur.flipV());
-            sashwind.mc.mod.ffcraft.client.net.VideoPlayerClientNetworking.updateScreenUv(pid, sd.id(), newUv);
-        }
+        // 全新 UV 架构：屏幕默认 16:9 画布居中，非 16:9 视频在渲染端通过 MetricPlaneProjection 动态等比适应，不再篡改屏幕自身 UV Transform
     }
 
     /**

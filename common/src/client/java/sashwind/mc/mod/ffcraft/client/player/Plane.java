@@ -26,34 +26,40 @@ public class Plane {
         if (points.size() < 3) throw new IllegalArgumentException("至少需要3个点");
         Vector3d normal = Three2Flat.calculateNormal(points.get(0), points.get(1), points.get(2));
         Vector3d origin = points.get(0);
-        Vector3d uAxis = new Vector3d(points.get(1)).sub(origin).normalize();
-        Vector3d vAxis = new Vector3d(normal).cross(uAxis).normalize();
-        uAxis = new Vector3d(vAxis).cross(normal).normalize();
+        Vector3d[] axes = calculatePlaneAxes(normal);
+        Vector3d uAxis = axes[0];
+        Vector3d vAxis = axes[1];
 
         double[] coords = new double[points.size() * 2];
-        double minU = Double.MAX_VALUE, maxU = -Double.MAX_VALUE;
-        double minV = Double.MAX_VALUE, maxV = -Double.MAX_VALUE;
-
         for (int i = 0; i < points.size(); i++) {
             Vector3d rel = new Vector3d(points.get(i)).sub(origin);
-            double u = rel.dot(uAxis);
-            double v = rel.dot(vAxis);
-            coords[2 * i] = u;
-            coords[2 * i + 1] = v;
-            if (u < minU) minU = u; if (u > maxU) maxU = u;
-            if (v < minV) minV = v; if (v > maxV) maxV = v;
-        }
-
-        double sizeU = maxU - minU;
-        double sizeV = maxV - minV;
-        if (sizeU < 0.0001) sizeU = 1.0;
-        if (sizeV < 0.0001) sizeV = 1.0;
-
-        for (int i = 0; i < points.size(); i++) {
-            coords[2 * i] = (coords[2 * i] - minU) / sizeU;
-            coords[2 * i + 1] = (coords[2 * i + 1] - minV) / sizeV;
+            coords[2 * i] = rel.dot(uAxis);     // 纯物理米数：世界水平向右 U (米)
+            coords[2 * i + 1] = rel.dot(vAxis); // 纯物理米数：世界垂直向下 V (米)
         }
         return coords;
+    }
+
+    /**
+     * 基于绝对世界空间构建平面上的标准正交坐标系（消除点选顺序导致的颠倒与角度畸变）
+     * uAxis: 平面内世界水平向右方向
+     * vAxis: 平面内世界垂直向下方向
+     */
+    public static Vector3d[] calculatePlaneAxes(Vector3d normal) {
+        Vector3d worldDown = new Vector3d(0, -1, 0);
+        double dot = worldDown.dot(normal);
+        Vector3d uAxis, vAxis;
+
+        if (Math.abs(dot) < 0.95) {
+            // 立面或斜面：根据世界重力方向计算自然的水平与垂直轴
+            vAxis = new Vector3d(worldDown).sub(new Vector3d(normal).mul(dot)).normalize();
+            uAxis = new Vector3d(vAxis).cross(normal).normalize();
+        } else {
+            // 水平地面或天花板：以世界北向 (0, 0, -1) 为向下，(1, 0, 0) 为向右
+            Vector3d refForward = normal.y > 0 ? new Vector3d(0, 0, 1) : new Vector3d(0, 0, -1);
+            vAxis = new Vector3d(refForward).sub(new Vector3d(normal).mul(refForward.dot(normal))).normalize();
+            uAxis = new Vector3d(vAxis).cross(normal).normalize();
+        }
+        return new Vector3d[]{uAxis, vAxis};
     }
 
     private static List<Integer> earcutFn(double[] coords) {
@@ -222,6 +228,32 @@ public class Plane {
                 stitched.add(curUvsRaw.clone());
             }
         }
+
+        // 全局等比居中：以屏幕物理高度为 1.0 米标准基准进行绝对各向同性归一化
+        // 这样多边形几何中心位于 (0, 0)，高度跨度为 1.0 ([-0.5, 0.5])，宽度跨度为真实的物理纵横比 Aspect ([-Aspect/2, Aspect/2])
+        // 4:3 屏幕宽度跨度为 4/3，16:9 屏幕宽度跨度为 16/9，绝对不被压缩成 1:1，长宽比 100% 真实！
+        double minU = Double.MAX_VALUE, maxU = -Double.MAX_VALUE;
+        double minV = Double.MAX_VALUE, maxV = -Double.MAX_VALUE;
+        for (double[] uvs : stitched) {
+            for (int i = 0; i < uvs.length / 2; i++) {
+                double u = uvs[i * 2], v = uvs[i * 2 + 1];
+                if (u < minU) minU = u; if (u > maxU) maxU = u;
+                if (v < minV) minV = v; if (v > maxV) maxV = v;
+            }
+        }
+        double sizeU = Math.max(0.0001, maxU - minU);
+        double sizeV = Math.max(0.0001, maxV - minV);
+        double baseScale = sizeV; // 以高度为单位米基准
+        double midU = (minU + maxU) / 2.0;
+        double midV = (minV + maxV) / 2.0;
+
+        for (double[] uvs : stitched) {
+            for (int i = 0; i < uvs.length / 2; i++) {
+                uvs[i * 2] = (uvs[i * 2] - midU) / baseScale;
+                uvs[i * 2 + 1] = (uvs[i * 2 + 1] - midV) / baseScale;
+            }
+        }
+
         return stitched;
     }
 }

@@ -66,7 +66,7 @@ public final class VideoPlayerMapper {
     }
 
     public static ServerVideoScreen createScreen(UUID id, UUID playerId, String name, net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, List<ScreenVertex> vertices, int screenType, double radius) {
-        UvTransform uv = calculateInitialUvTransform(vertices);
+        UvTransform uv = (screenType == 1) ? UvTransform.createDefault(1) : calculateInitialUvTransform(vertices);
         return new ServerVideoScreen(id, playerId, name, dimension, new ArrayList<>(vertices), uv, ScreenChannelState.createDefault(), false, screenType, radius);
     }
 
@@ -77,38 +77,9 @@ public final class VideoPlayerMapper {
 
     public static UvTransform calculateUvTransform(List<ScreenVertex> vertices, double videoAspect,
                                                     boolean flipU, boolean flipV) {
-        if (vertices.size() < 3) {
-            return new UvTransform(0, 0, 1, 1, 0, flipU, flipV);
-        }
-
-        // 屏幕宽高比必须在 UV 坐标系下测量（u 轴 = 首条边，与渲染端 Plane 一致）。
-        // 旧实现用世界坐标猜方向（sizeX/sizeZ 为宽、sizeY 为高）——玩家从竖直边
-        // 开始点选时 u 轴是竖直的，letterbox 比例加错轴 → 视频被纵向拉伸。
-        double[] span = uvSpan(vertices);
-        if (span == null) {
-            return new UvTransform(0, 0, 1, 1, 0, flipU, flipV);
-        }
-
-        double screenAspect = span[0] / span[1];
-
-        double scaleU, scaleV;
-
-        // scale >= 1 扩展UV到0-1之外实现信箱效果，offset=0保持居中
-        if (screenAspect > videoAspect) {
-            scaleU = screenAspect / videoAspect;
-            scaleV = 1.0;
-        } else {
-            scaleU = 1.0;
-            scaleV = videoAspect / screenAspect;
-        }
-
-        double offsetU = 0.0;
-        double offsetV = 0.0;
-
-        System.out.println("[UV Init] Screen aspect=" + screenAspect + ", video aspect=" + videoAspect +
-                ", scaleU=" + scaleU + ", scaleV=" + scaleV + ", offsetU=" + offsetU + ", offsetV=" + offsetV);
-
-        return new UvTransform(offsetU, offsetV, scaleU, scaleV, 0, flipU, flipV);
+        // 坐标系方法：屏幕几何中心与真实物理长宽比由正交物理坐标系自然保持，
+        // 默认 UV 变换为单位标准状态 (scale=1.0, offset=0, rotation=0)，杜绝任何长宽比畸变与压扁问题！
+        return new UvTransform(0.0, 0.0, 1.0, 1.0, 0.0, flipU, flipV);
     }
 
     /**
